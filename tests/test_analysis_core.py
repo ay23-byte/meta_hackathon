@@ -71,6 +71,16 @@ def test_constant_voltage_has_undefined_r_squared():
     assert result["r_squared"] is None
 
 
+def test_duplicate_column_names_are_rejected():
+    frame = pd.DataFrame(
+        [[0.0, 0.1, 3.0], [1.0, 2.0, 4.0], [2.0, 3.0, 5.0]],
+        columns=["current_A", "voltage_V", "current_A"],
+    )
+
+    with pytest.raises(ValueError, match="Duplicate column names"):
+        prepare_analysis_data(frame, "current_A", "voltage_V")
+
+
 def test_measurement_explorer_flags_extrapolation():
     analysis = analyze_linear([0, 1, 2], [1, 3, 5])
     result = propose_measurements([-1, 1, 3], analysis, [0, 1, 2])

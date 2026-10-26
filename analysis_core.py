@@ -45,6 +45,15 @@ def prepare_analysis_data(frame, current_col, voltage_col):
     if frame.empty or len(frame.columns) == 0:
         raise ValueError("The CSV contains no data rows.")
 
+    if frame.columns.duplicated().any():
+        duplicates = ", ".join(
+            map(str, frame.columns[frame.columns.duplicated()].unique())
+        )
+        raise ValueError(
+            "Duplicate column names are not allowed: "
+            f"{duplicates}. Rename them before uploading."
+        )
+
     selected = pd.DataFrame({
         "source_row": np.arange(1, len(frame) + 1),
         "current": pd.to_numeric(frame[current_col], errors="coerce"),
@@ -56,9 +65,8 @@ def prepare_analysis_data(frame, current_col, voltage_col):
     valid = np.isfinite(current) & np.isfinite(voltage)
 
     clean = selected.loc[valid].copy().reset_index(drop=True)
-    clean.rename(
+    clean = clean.rename(
         columns={"current": "current_A", "voltage": "voltage_V"},
-        inplace=True,
     )
 
     return {

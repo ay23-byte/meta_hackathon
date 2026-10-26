@@ -50,7 +50,15 @@ def json_safe(value):
 
 
 def validate_ai_report(report):
-    """Check the AI report's required structure."""
+    """Check the AI report's required structure.
+
+    Mirrors the strict schema enforced by ask_muse.validate_report so the UI
+    never renders or exports a report the producer would have rejected.
+    Sections must be the eight required titles, each exactly once, and each
+    claim must carry all six evidence-grounding fields.
+    """
+    from ask_muse import REQUIRED_TITLES
+
     if not isinstance(report, dict):
         return False
 
@@ -63,23 +71,53 @@ def validate_ai_report(report):
 
     if not isinstance(sections, list) or not sections:
         return False
-    if not isinstance(claims, list):
+    if not isinstance(claims, list) or len(claims) > 2:
         return False
+
+    expected = {title.casefold() for title in REQUIRED_TITLES}
+    seen = set()
 
     for section in sections:
         if not isinstance(section, dict):
             return False
-        if not isinstance(section.get("title"), str):
+
+        title = section.get("title")
+        content = section.get("content")
+
+        if not isinstance(title, str) or not title.strip():
             return False
-        if not isinstance(section.get("content"), str):
+        if not isinstance(content, str) or not content.strip():
             return False
+
+        normalized = title.strip().casefold()
+        if normalized not in expected or normalized in seen:
+            return False
+
+        seen.add(normalized)
+
+    if seen != expected:
+        return False
+
+    required_fields = {
+        "claim",
+        "evidence",
+        "evidence_type",
+        "confidence_or_uncertainty",
+        "limitation",
+        "proposed_verification",
+    }
 
     for claim in claims:
         if not isinstance(claim, dict):
             return False
-        if not isinstance(claim.get("claim", ""), str):
+
+        if not required_fields.issubset(claim):
             return False
-        if not isinstance(claim.get("evidence", ""), str):
+
+        if any(
+            not isinstance(claim[field], str) or not claim[field].strip()
+            for field in required_fields
+        ):
             return False
 
     return True
@@ -266,7 +304,34 @@ with st.sidebar:
         - Proposed measurements are hypothetical.
         - Fit metrics do not prove physical validity.
         - Provenance is not independently verified.
-        """
+        """)
+
+    st.divider()
+    st.subheader("AI provider status")
+    _api_key_configured = bool(os.getenv("BASETEN_API_KEY"))
+    if _api_key_configured:
+        st.success("Muse Spark via Baseten is configured.")
+    else:
+        st.info(
+            "Muse Spark via Baseten is not configured. Add "
+            "BASETEN_API_KEY to a local .env file to enable AI "
+            "interpretation. Calculations and exports remain available."
+        )
+    st.caption(
+        "Model: meta-models/muse-spark-open · Endpoint: "
+        "https://inference.baseten.co/v1 · Raw data and API key are "
+        "never sent as context."
+    )
+
+    st.divider()
+    st.subheader("Workflow")
+    st.caption(
+        "1 · Inspect data\n"
+        "2 · Map columns and units\n"
+        "3 · Run deterministic fit\n"
+        "4 · Review plots and residuals\n"
+        "5 · Optional AI interpretation\n"
+        "6 · Export reproducible record"
     )
 
 # ---------------------------------------------------------
@@ -307,7 +372,7 @@ if raw.empty or len(raw.columns) == 0:
 
 st.subheader("1 · Inspect and configure")
 st.caption(f"{source} · {len(raw):,} source rows · {len(raw.columns)} columns")
-st.dataframe(raw.head(8), use_container_width=True, hide_index=True)
+st.dataframe(raw.head(8), width="stretch", hide_index=True)
 
 description = st.text_input("Dataset description or provenance (optional)")
 columns = list(raw.columns)
@@ -379,12 +444,11 @@ if (
 clean = prepared["data"].copy()
 clean["fitted_voltage"] = fitted
 clean["residual_voltage"] = residuals
-clean.rename(
+clean = clean.rename(
     columns={
         "current_A": f"current_{current_unit.strip() or 'unitless'}",
         "voltage_V": f"voltage_{voltage_unit.strip() or 'unitless'}",
     },
-    inplace=True,
 )
 
 st.success(
@@ -513,7 +577,7 @@ with st.expander("Model assumptions and limitations"):
     )
 
 with st.expander("Retained data, fitted values, and residuals"):
-    st.dataframe(clean, use_container_width=True, hide_index=True)
+    st.dataframe(clean, width="stretch", hide_index=True)
 
 # ---------------------------------------------------------
 # 6. Hypothetical measurement explorer
@@ -546,7 +610,7 @@ try:
         raise ValueError("NaN and infinity are not allowed.")
 
     explorer = propose_measurements(candidates, analysis, x)
-    st.dataframe(explorer, use_container_width=True, hide_index=True)
+    st.dataframe(explorer, width="stretch", hide_index=True)
 
     outside = int((~explorer["within_observed_range"].astype(bool)).sum())
     if outside:
@@ -674,7 +738,7 @@ if ai_report and validate_ai_report(ai_report):
     claims = ai_report["structured"].get("claims", [])
     if claims:
         st.markdown("**Evidence-linked claims**")
-        st.dataframe(pd.DataFrame(claims), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
 
 # ---------------------------------------------------------
 # 9. Export report, cleaned CSV, and JSON

@@ -1,56 +1,89 @@
 # LabLens AI project audit
 
-## Current architecture
+## Scope
 
-The repository is a compact scientific Python application with a deterministic numerical engine and an optional evidence-grounded AI layer.
+This audit covers the repository as it exists on branch
+`arena/9e30a63a-meta-hackathon`: `app.py`, `analysis_core.py`,
+`ask_muse.py`, `analyze_experiment.py`, `tests/`, `test_muse.py`,
+`requirements.txt`, `README.md`, and related project files.
 
-- `analysis_core.py` is the authoritative numerical engine for data cleaning, alias recognition, linear regression, fitted values, residuals, quality metrics, and hypothetical candidate predictions.
-- `app.py` is the Streamlit dashboard. It loads CSV data, manages the workflow, chooses columns and units, renders plots, presents metrics, and optionally requests a Muse Spark interpretation.
-- `ask_muse.py` is the provider adapter for Baseten Muse Spark using the OpenAI-compatible SDK. It validates structured JSON outputs and falls back to plain text when needed.
-- `analyze_experiment.py` provides a CLI entry point using the same underlying data-cleaning and fit logic as the dashboard.
-- `tests/` contains regression tests covering data cleaning, numerical consistency, and prompt/provider validation.
+Baseline test run (before changes): `python -m pytest` →
+**22 passed, 1 skipped** (the skip is the optional live Muse Spark test,
+which needs `BASETEN_API_KEY`). After the fixes below: **26 passed, 1
+skipped**.
 
-## Verified features
+## Architecture and data flow
 
-The repository already demonstrates several working features that are backed by code and tests:
+CSV upload (or bundled sample) → row preview → user-confirmed current/voltage
+columns and units → `analysis_core.prepare_analysis_data` (numeric conversion,
+invalid-pair exclusion, source-row tracking) →
+`analysis_core.analyze_linear` (ordinary least squares `V = mI + b`, fitted
+values, residuals, R², RMSE) → plots and metrics → optional user-triggered
+Muse Spark interpretation via `ask_muse.generate_interpretation` → strict
+schema validation → Markdown/CSV/JSON exports. The CLI (`analyze_experiment.py`)
+shares the same numerical core.
 
-- CSV upload and bundled sample-data workflow
-- Alias detection for common current and voltage column names
-- Numeric cleaning with retained/dropped row counts
-- OLS fit for $V = mI + b$
-- R-squared and RMSE calculations with explicit assumptions
-- Fitted-value and residual outputs
-- Clear warnings for invalid data, too-few points, and non-varying current
-- Hypothetical follow-up predictions clearly labeled as non-measured values
-- Machine-readable exports and markdown report generation
-- Graceful handling of missing API keys and malformed AI responses
+## Current features and user journey
 
-## Confirmed defects and operational risks
+1. Welcome/hero with value proposition and scientific safeguards.
+2. CSV upload or automatic bundled sample load.
+3. Column selection with alias suggestion and manual fallback; units input.
+4. Paired-row cleaning with retained/dropped counts and source-row mapping.
+5. OLS fit: slope, intercept, R², RMSE, fit plot, residual plot.
+6. Data-quality warnings (too few points, constant voltage, non-varying current).
+7. Hypothetical follow-up explorer with extrapolation flags.
+8. Reproducible analysis record (JSON record, SHA-256 input fingerprint).
+9. Optional Muse Spark interpretation, schema-validated.
+10. Markdown, cleaned-CSV, and JSON downloads.
 
-The following items are supported by actual repository evidence or fresh runtime checks:
+## Imports and exports verified
 
-1. The workspace is not under version control in this environment (`git status` reported “not a git repository”), so repository provenance and commit tracking are unavailable in this session.
-2. The project did not include a root-level `.env.example` file before this audit. This created a setup gap for local environment configuration.
-3. The Streamlit app binds to a fixed port, so a conflicting service on 8501 may block startup and must be avoided during smoke testing.
-4. AI interpretation remains optional and is gated on `BASETEN_API_KEY`. Live calls are intentionally skipped without the environment variable and are not part of the default test suite.
-5. Scientific interpretation is intentionally bounded: AI does not overwrite deterministic numerical results, and the app treats AI output as non-authoritative guidance.
+`app.py` imports from `analysis_core`:
+`analyze_linear`, `detect_candidate_columns`, `prepare_analysis_data`,
+`propose_measurements`, `serialize_analysis_exports` — all exist.
+`app.py` lazily imports `generate_interpretation` from `ask_muse` only when
+the user requests AI interpretation — exists.
+`ask_muse.py` exports `REQUIRED_TITLES`, `build_prompt`, `describe_provider_status`,
+`validate_report`, `generate_interpretation` — all exist.
+`validate_report` enforces exactly the 8 required section titles, each once,
+at most two claims, and all six claim fields.
 
-## Limitations and scientific cautions
+## Findings
 
-- The model is a simple unweighted straight-line regression and does not estimate uncertainty intervals without explicit assumptions.
-- A high R-squared does not establish that the physical law is correct or that the data are free from systematic error.
-- The slope should only be described as resistance when the experiment and units justify that interpretation.
-- The app does not infer calibration, instrument noise, or provenance automatically; those remain user-verified or unknown.
-- The contextual AI layer is a suggestion engine, not independent scientific proof.
+### Fixed in this session
 
-## Prioritized implementation plan
+| Severity | Issue | Fix |
+|----------|-------|-----|
+| Critical | Missing `.env.example` referenced by README and setup docs | Created `.env.example` with placeholder `BASETEN_API_KEY` only |
+| High | Pandas 3.x deprecation: `DataFrame.rename(..., inplace=True)` will become an error | Replaced with assignment (`clean = clean.rename(...)`) in `analysis_core.py` and `app.py` |
+| High | Duplicate column names were silently dropped by pandas before validation, causing silent data loss | `prepare_analysis_data` now raises a clear `ValueError` naming duplicated columns |
+| High | Streamlit `use_container_width=True` deprecated in Streamlit 1.66 (removed after 2025-12-31) | Migrated four `st.dataframe` calls to `width="stretch"` |
+| Medium | `test_muse.py` silently skipped when the provider returned empty/malformed output even with credentials | Empty/malformed output with a configured key is now a hard `pytest.fail`; call uses a bounded 30s timeout |
+| Medium | AI report validation in `app.py` was looser than `ask_muse.validate_report` | Harmonized: app now requires the 8 required section titles and all six claim fields |
+| Medium | No visible AI-provider status in the UI | Added provider-status panel (configured/not configured, model, endpoint) and workflow steps to the sidebar |
+| Low | Documentation lived at the root with no `docs/` structure | Moved `ARCHITECTURE.md`, `SCIENTIFIC_VALIDATION.md`, `DEMO_SCRIPT.md`, `EVALUATION_PLAN.md`, `HACKATHON_PITCH.md` into `docs/`; added `docs/HACKATHON_CHECKLIST.md` |
 
-1. Preserve the deterministic numerical engine and its documented invariants.
-2. Keep the Streamlit UI focused on a clear workflow: load data, inspect quality, fit model, review diagnostics, then optionally request AI interpretation.
-3. Keep AI output evidence-grounded and schema-validated.
-4. Keep exports reproducible and independent of AI availability.
-5. Continue to validate with pytest and a headless Streamlit smoke test before claiming project readiness.
+### Tests added
 
-## Audit outcome
+- `tests/test_analysis_core.py::test_duplicate_column_names_are_rejected`
+- `tests/test_pipeline_extended.py::test_generate_interpretation_requires_api_key_and_is_secret_free`
+- `tests/test_pipeline_extended.py::test_export_row_counts_and_metrics_match_analysis`
+- `tests/test_pipeline_extended.py::test_app_ai_report_validation_enforces_required_schema`
 
-The project already has a solid foundation: the core regression logic, tests, and most workflow pieces are in place and are working under the verified environment. The main gaps are operational setup and documentation clarity rather than a broken numerical core.
+### Remaining / unresolved
+
+- **Live Muse Spark integration is unverified in this environment.** No `BASETEN_API_KEY` is present, so `test_muse.py` is skipped. Earlier direct Baseten calls returned usable content (`"Hello World"`, populated `reasoning_content`) but also some incomplete fragments, so the full structured-report workflow should be re-verified live with a real key before the demo. Do not present mock output as live.
+- **Straight-line fit only.** Nonlinear or weighted models, confidence intervals, parameter standard errors, and instrument uncertainty are not implemented and are explicitly labeled as unavailable. Do not present R² as proof of causation.
+- **OpenAI SDK major version.** `requirements.txt` says `openai>=1.50` while the installed/tested SDK is 3.x. `ask_muse.py` is compatible with 3.x (verified: `max_retries`, `timeout`, `message.content` all work). Pin or bound the SDK in `requirements.txt` before release if a specific major version is desired.
+- **Analysis artifacts (`results/`) are committed to the repo.** They are sample/demo outputs; consider gitignoring generated outputs before submission if they should not be versioned.
+- **Hackathon rules.** The official Meta hackathon rules, judging criteria, deadlines, and submission requirements have not been verified against this repository; confirm authorization, required Meta technology use, and submission format separately.
+
+## Verified behavior
+
+- CSV parsing errors, empty files, bad encodings, malformed rows → clear user-facing errors; app stops gracefully.
+- Numeric conversion with explicit dropped-row counts; NaN/infinite values excluded as invalid pairs; source row order preserved.
+- Constant independent variable rejected; undefined R² when voltage has no variance.
+- JSON exports are standards-compliant; non-finite numbers become `null`.
+- Missing `BASETEN_API_KEY` → `RuntimeError` from `generate_interpretation`, no secret in the message.
+- Provider HTTP errors (401/403/404/429) mapped to actionable, secret-free messages.
+- App and deterministic analysis remain fully usable with no API key.
