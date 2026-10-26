@@ -1,12 +1,13 @@
 
 """LabLens AI: scientific analysis dashboard."""
 
-from datetime import datetime, timezone
-from pathlib import Path
 import hashlib
 import json
 import os
+import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,11 +26,42 @@ from analysis_core import (
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
+# Bounds on untrusted input. These protect both the UI and the AI context.
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024       # 5 MiB of CSV
+MAX_SOURCE_ROWS = 200_000
+MAX_CANDIDATE_VALUES = 50
+MAX_SHORT_TEXT = 300
+MAX_UNIT_TEXT = 24
+MAX_CANDIDATE_TEXT = 2000
+
 st.set_page_config(
     page_title="LabLens AI",
     page_icon="🔬",
     layout="wide",
 )
+
+
+def safe_unit(value, fallback):
+    """Return a unit string that is safe in labels and CSV column headers.
+
+    CSV consumers such as Excel interpret cells beginning with ``= + - @``
+    as formulas, so unit text must never be allowed to inject one.
+    """
+    text = str(value or "").strip()
+    text = re.sub(r"[^A-Za-z0-9_./^\-°µΩ ]", "", text)[:MAX_UNIT_TEXT]
+    text = text.strip()
+    if not text:
+        return fallback
+    if text[0] in "=+-@":
+        text = "'" + text
+    return text
+
+
+def md_inline(value):
+    """Make untrusted text safe to place on one line of the Markdown report."""
+    text = " ".join(str(value).split())
+    text = text.replace("\\", "\\\\").replace("`", "'").replace("|", "\\|")
+    return text[:MAX_SHORT_TEXT]
 
 
 def json_safe(value):
@@ -49,58 +81,54 @@ def json_safe(value):
     return value
 
 
+def validated_ai_structure(report):
+    """Return the sanitized report body, or ``None`` when it is invalid."""
+    from ask_muse import validate_report
+
+    if not isinstance(report, dict) or not isinstance(report.get("model"), str):
+        return None
+    return validate_report(report.get("structured"))
+
+
 def validate_ai_report(report):
-    """Check the AI report's required structure."""
-    if not isinstance(report, dict):
-        return False
+    """Check the AI report wrapper against the single authoritative schema.
 
-    structured = report.get("structured")
-    if not isinstance(structured, dict):
-        return False
-
-    sections = structured.get("sections")
-    claims = structured.get("claims")
-
-    if not isinstance(sections, list) or not sections:
-        return False
-    if not isinstance(claims, list):
-        return False
-
-    for section in sections:
-        if not isinstance(section, dict):
-            return False
-        if not isinstance(section.get("title"), str):
-            return False
-        if not isinstance(section.get("content"), str):
-            return False
-
-    for claim in claims:
-        if not isinstance(claim, dict):
-            return False
-        if not isinstance(claim.get("claim", ""), str):
-            return False
-        if not isinstance(claim.get("evidence", ""), str):
-            return False
-
-    return True
+    Delegates to ``ask_muse.validate_report`` rather than maintaining a
+    second copy of the rules. This guarantees the UI can never render or
+    export a report the producer would have rejected (8 required titles,
+    each exactly once, all six claim fields, and all size limits).
+    """
+    return validated_ai_structure(report) is not None
 
 
-def read_csv_safely(file_object, filename):
-    """Read CSV data and show a useful parsing error."""
+def read_csv_safely(file_object, filename, max_bytes=MAX_UPLOAD_BYTES):
+    """Read CSV data with an explicit size bound and useful parse errors."""
     try:
+        size = getattr(file_object, "size", None)
+        if size is None and isinstance(file_object, (str, Path)):
+            size = Path(file_object).stat().st_size
+        if size is not None and size > max_bytes:
+            st.error(
+                f"{filename} is {size:,} bytes, which exceeds the "
+                f"{max_bytes:,}-byte limit. Upload a smaller CSV."
+            )
+            st.stop()
         return pd.read_csv(file_object)
     except (
         pd.errors.ParserError,
+        pd.errors.EmptyDataError,
         UnicodeDecodeError,
         ValueError,
         OSError,
     ) as exc:
-        st.error(f"Could not read {filename}: {exc}")
+        st.error(f"Could not read {filename}: {type(exc).__name__}: {exc}")
         st.stop()
 
 
 def make_context_hash(record, explorer_records):
     """Bind an AI report to the complete displayed analysis context."""
+    from ask_muse import MODEL
+
     payload = {
         "source_hash": record["input_sha256"],
         "question": record["scientific_question"],
@@ -109,6 +137,7 @@ def make_context_hash(record, explorer_records):
         "results": record["results"],
         "row_counts": record["row_counts"],
         "explorer": explorer_records,
+        "provider_model": MODEL,
     }
     encoded = json.dumps(
         payload, sort_keys=True, allow_nan=False
@@ -124,7 +153,7 @@ def create_analysis_record(
     """Create a reproducible numerical-analysis record."""
     return json_safe({
         "application": "LabLens AI",
-        "application_version": "1.0.0",
+        "application_version": "1.1.0",
         "software_versions": {
             "python": sys.version.split()[0],
             "numpy": np.__version__,
@@ -266,7 +295,37 @@ with st.sidebar:
         - Proposed measurements are hypothetical.
         - Fit metrics do not prove physical validity.
         - Provenance is not independently verified.
-        """
+        """)
+
+    st.divider()
+    st.subheader("AI provider status")
+    _api_key_configured = bool(os.getenv("BASETEN_API_KEY"))
+    if _api_key_configured:
+        st.success("Muse Spark via Baseten is configured.")
+    else:
+        st.info(
+            "Muse Spark via Baseten is not configured. Add "
+            "BASETEN_API_KEY to a local .env file to enable AI "
+            "interpretation. Calculations and exports remain available."
+        )
+    from ask_muse import MODEL
+
+    st.caption(
+        f"Model: {MODEL} · Endpoint: "
+        "https://inference.baseten.co/v1 · Raw data and API key are "
+        "never sent as context."
+    )
+    st.caption("Built with Muse Spark Open.")
+
+    st.divider()
+    st.subheader("Workflow")
+    st.caption(
+        "1 · Inspect data\n"
+        "2 · Map columns and units\n"
+        "3 · Run deterministic fit\n"
+        "4 · Review plots and residuals\n"
+        "5 · Optional AI interpretation\n"
+        "6 · Export reproducible record"
     )
 
 # ---------------------------------------------------------
@@ -294,11 +353,18 @@ if uploaded is None:
     raw = read_csv_safely(sample_path, source)
 else:
     raw_bytes = uploaded.getvalue()
-    source = Path(uploaded.name).name
+    source = Path(uploaded.name).name[:120]
     raw = read_csv_safely(uploaded, source)
 
 if raw.empty or len(raw.columns) == 0:
     st.error("The CSV contains no usable rows or columns.")
+    st.stop()
+
+if len(raw) > MAX_SOURCE_ROWS:
+    st.error(
+        f"The CSV has {len(raw):,} rows, which exceeds the "
+        f"{MAX_SOURCE_ROWS:,}-row limit. Upload a smaller dataset."
+    )
     st.stop()
 
 # ---------------------------------------------------------
@@ -307,9 +373,12 @@ if raw.empty or len(raw.columns) == 0:
 
 st.subheader("1 · Inspect and configure")
 st.caption(f"{source} · {len(raw):,} source rows · {len(raw.columns)} columns")
-st.dataframe(raw.head(8), use_container_width=True, hide_index=True)
+st.dataframe(raw.head(8), width="stretch", hide_index=True)
 
-description = st.text_input("Dataset description or provenance (optional)")
+description = st.text_input(
+    "Dataset description or provenance (optional)",
+    max_chars=MAX_SHORT_TEXT,
+)
 columns = list(raw.columns)
 guess_i = detect_candidate_columns(columns, "current")
 guess_v = detect_candidate_columns(columns, "voltage")
@@ -332,14 +401,24 @@ with c2:
         "Voltage column", columns, index=voltage_index
     )
 with c3:
-    current_unit = st.text_input("Current unit", value="A")
+    current_unit = st.text_input(
+        "Current unit", value="A", max_chars=MAX_UNIT_TEXT
+    )
 with c4:
-    voltage_unit = st.text_input("Voltage unit", value="V")
+    voltage_unit = st.text_input(
+        "Voltage unit", value="V", max_chars=MAX_UNIT_TEXT
+    )
 
 question = st.text_input(
     "Scientific question",
     value="How does voltage vary with current over the measured range?",
+    max_chars=MAX_SHORT_TEXT,
 )
+
+# Sanitize unit strings before they reach plot labels, CSV headers and the
+# exported record. See safe_unit() for the CSV-formula-injection rationale.
+current_unit = safe_unit(current_unit, "A")
+voltage_unit = safe_unit(voltage_unit, "V")
 
 if current_col == voltage_col:
     st.error("Choose different columns for current and voltage.")
@@ -379,12 +458,11 @@ if (
 clean = prepared["data"].copy()
 clean["fitted_voltage"] = fitted
 clean["residual_voltage"] = residuals
-clean.rename(
+clean = clean.rename(
     columns={
         "current_A": f"current_{current_unit.strip() or 'unitless'}",
         "voltage_V": f"voltage_{voltage_unit.strip() or 'unitless'}",
     },
-    inplace=True,
 )
 
 st.success(
@@ -459,7 +537,7 @@ m4.metric("Voltage RMSE", f"{analysis['rmse']:.5g} {vu}")
 
 st.latex(r"V = mI + b")
 st.caption(
-    f"V = {analysis['slope']:.7g} × I + ({analysis['intercept']:.7g}). "
+    f"V = {analysis['slope']:.7g} × I + ({analysis['intercept']:.7g}). "  # noqa: RUF001 - intentional multiplication sign
     "RMSE uses denominator n. The slope represents resistance only when "
     "the units and physical model justify that interpretation."
 )
@@ -513,7 +591,7 @@ with st.expander("Model assumptions and limitations"):
     )
 
 with st.expander("Retained data, fitted values, and residuals"):
-    st.dataframe(clean, use_container_width=True, hide_index=True)
+    st.dataframe(clean, width="stretch", hide_index=True)
 
 # ---------------------------------------------------------
 # 6. Hypothetical measurement explorer
@@ -531,6 +609,7 @@ step = (high - low) / 10 if high > low else 1.0
 candidate_text = st.text_input(
     "Candidate current values (comma-separated)",
     value=f"{low:.6g}, {(low + high)/2:.6g}, {high:.6g}, {high + step:.6g}",
+    max_chars=MAX_CANDIDATE_TEXT,
 )
 
 explorer = pd.DataFrame()
@@ -542,11 +621,16 @@ try:
     ]
     if not candidates:
         raise ValueError("Enter at least one candidate.")
+    if len(candidates) > MAX_CANDIDATE_VALUES:
+        candidates = candidates[:MAX_CANDIDATE_VALUES]
+        st.info(
+            f"Only the first {MAX_CANDIDATE_VALUES} candidate values are used."
+        )
     if not np.all(np.isfinite(candidates)):
         raise ValueError("NaN and infinity are not allowed.")
 
     explorer = propose_measurements(candidates, analysis, x)
-    st.dataframe(explorer, use_container_width=True, hide_index=True)
+    st.dataframe(explorer, width="stretch", hide_index=True)
 
     outside = int((~explorer["within_observed_range"].astype(bool)).sum())
     if outside:
@@ -655,26 +739,30 @@ ai_report = (
     else None
 )
 
-if ai_report and validate_ai_report(ai_report):
+# Reuse the sanitized structure for rendering AND export so no untrusted
+# provider keys can reach the UI or the downloaded record.
+ai_structure = validated_ai_structure(ai_report) if ai_report else None
+
+if ai_structure:
     record["ai_interpretation_generated"] = True
-    record["ai_provider_model"] = (
-        f"Baseten / {ai_report.get('model', 'meta-models/muse-spark-open')}"
-    )
-    record["ai_interpretation"] = ai_report["structured"]
+    record["ai_provider_model"] = f"Baseten / {ai_report['model']}"
+    record["ai_interpretation"] = ai_structure
 
     st.markdown("### Muse Spark report")
     st.caption(
         "AI statements are not independently verified. Check every claim "
-        "against the numerical results and original experiment."
+        "against the numerical results and original experiment. Content is "
+        "shown as plain text so model output cannot inject links or markup."
     )
 
-    for section in ai_report["structured"]["sections"]:
-        st.markdown(f"**{section['title']}**\n\n{section['content']}")
+    for section in ai_structure["sections"]:
+        st.markdown(f"**{section['title']}**")
+        st.text(section["content"])
 
-    claims = ai_report["structured"].get("claims", [])
+    claims = ai_structure["claims"]
     if claims:
         st.markdown("**Evidence-linked claims**")
-        st.dataframe(pd.DataFrame(claims), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
 
 # ---------------------------------------------------------
 # 9. Export report, cleaned CSV, and JSON
@@ -689,12 +777,12 @@ warning_text = (
 
 report = f"""# LabLens AI scientific analysis
 
-- **Source:** {source}
+- **Source:** {md_inline(source)}
 - **Input SHA-256:** `{record['input_sha256']}`
 - **UTC timestamp:** {record['analysis_timestamp_utc']}
-- **Question:** {question}
-- **Current column:** {current_col} ({current_unit})
-- **Voltage column:** {voltage_col} ({voltage_unit})
+- **Question:** {md_inline(question)}
+- **Current column:** {md_inline(current_col)} ({md_inline(current_unit)})
+- **Voltage column:** {md_inline(voltage_col)} ({md_inline(voltage_unit)})
 - **Rows retained:** {prepared['valid_rows']}
 - **Original rows:** {prepared['original_rows']}
 - **Rows excluded:** {prepared['dropped_rows']}
@@ -718,10 +806,11 @@ Candidate values are hypothetical. Predictions outside the observed range
 are extrapolations and are not validated by these data.
 """
 
-if ai_report and validate_ai_report(ai_report):
+if ai_structure:
     report += "\n## Muse Spark interpretation\n\n"
+    report += "AI-generated; not independently verified.\n\n"
     report += json.dumps(
-        ai_report["structured"],
+        ai_structure,
         indent=2,
         ensure_ascii=False,
         allow_nan=False,

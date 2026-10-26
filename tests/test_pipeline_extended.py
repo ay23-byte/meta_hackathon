@@ -5,8 +5,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from analysis_core import analyze_linear, detect_candidate_columns, prepare_analysis_data, propose_measurements, serialize_analysis_exports
-from ask_muse import REQUIRED_TITLES, build_prompt, describe_provider_status, validate_report
+from analysis_core import (
+    analyze_linear,
+    detect_candidate_columns,
+    prepare_analysis_data,
+    propose_measurements,
+    serialize_analysis_exports,
+)
+from ask_muse import (
+    MAX_CLAIMS,
+    MAX_SECTION_WORDS,
+    REQUIRED_TITLES,
+    build_prompt,
+    describe_provider_status,
+    generate_interpretation,
+    validate_report,
+)
 
 
 def test_ambiguous_alias_requires_manual_choice():
@@ -56,10 +70,102 @@ def test_muse_report_structure_validation_and_fallback():
 
 def test_muse_prompt_limits_report_size_without_omitting_sections():
     prompt = build_prompt({"results": {"n": 4, "rmse": 0.1}})
-    assert "at most 25 words" in prompt
-    assert "at most two claims" in prompt
+    assert f"at most {MAX_SECTION_WORDS} words" in prompt
+    assert f"at most {MAX_CLAIMS} claims" in prompt
     for title in REQUIRED_TITLES:
         assert title in prompt
+
+
+def test_generate_interpretation_requires_api_key_and_is_secret_free(
+    monkeypatch,
+):
+    monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        generate_interpretation({"results": {"n": 2}})
+
+    message = str(exc_info.value)
+    assert "BASETEN_API_KEY" in message
+    # Error messages must never leak the secret itself.
+    assert "your_baseten_api_key_here" not in message
+
+
+def test_app_ai_report_validation_enforces_required_schema():
+    from app import validate_ai_report
+
+    good = {
+        "model": "meta-models/muse-spark-open",
+        "structured": {
+            "sections": [
+                {"title": title, "content": "Short content here."}
+                for title in sorted(REQUIRED_TITLES)
+            ],
+            "claims": [
+                {
+                    "claim": "Fit is linear",
+                    "evidence": "Computed slope",
+                    "evidence_type": "computed_result",
+                    "confidence_or_uncertainty": "Not calibrated",
+                    "limitation": "Small range",
+                    "proposed_verification": "Collect more points",
+                }
+            ],
+        },
+    }
+    assert validate_ai_report(good) is True
+
+    # Missing sections are rejected.
+    incomplete = json.loads(json.dumps(good))
+    incomplete["structured"]["sections"] = incomplete["structured"][
+        "sections"
+    ][:2]
+    assert validate_ai_report(incomplete) is False
+
+    # Duplicate sections are rejected.
+    duplicate = json.loads(json.dumps(good))
+    duplicate["structured"]["sections"] = [
+        {"title": REQUIRED_TITLES[0], "content": "First."},
+        {"title": REQUIRED_TITLES[0], "content": "Second."},
+    ]
+    assert validate_ai_report(duplicate) is False
+
+    # Claims missing required evidence fields are rejected.
+    bad_claim = json.loads(json.dumps(good))
+    bad_claim["structured"]["claims"] = [{"claim": "only a claim"}]
+    assert validate_ai_report(bad_claim) is False
+
+
+def test_export_row_counts_and_metrics_match_analysis():
+    result = analyze_linear([0, 1, 2], [1, 3, 4])
+    clean = pd.DataFrame(
+        {
+            "current_A": [0, 1, 2],
+            "voltage_V": [1, 3, 4],
+            "fitted_voltage": result["fitted"],
+            "residual_voltage": result["residuals"],
+        }
+    )
+    record = {
+        "results": {
+            "slope": result["slope"],
+            "intercept": result["intercept"],
+            "r_squared": result["r_squared"],
+            "rmse": result["rmse"],
+            "n": result["n"],
+        }
+    }
+    exports = serialize_analysis_exports(record, clean, "# report")
+
+    decoded = json.loads(exports["json"])
+    assert decoded["results"]["slope"] == pytest.approx(result["slope"])
+    assert decoded["results"]["n"] == result["n"]
+
+    exported = pd.read_csv(StringIO(exports["csv"]))
+    assert len(exported) == result["n"]
+    assert exported["residual_voltage"].to_numpy() == pytest.approx(
+        exported["voltage_V"].to_numpy()
+        - exported["fitted_voltage"].to_numpy()
+    )
 
 
 @pytest.mark.parametrize("status,needle", [(401, "BASETEN_API_KEY"), (403, "permissions"), (404, "model"), (429, "quota")])

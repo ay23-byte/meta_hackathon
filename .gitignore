@@ -2,6 +2,24 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 .env
 .streamlit/secrets.toml
 *.py[cod]
+
+# Test coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Recommended scratch directory for CLI-generated artifacts
+outputs/
+
+# Local demo recordings and scratch files
+*.local.*
+
+# CLI-generated example artifacts (see results/README.md)
+results/*.png
+results/*.csv
+results/analysis_results.json
