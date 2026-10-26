@@ -1,0 +1,67 @@
+"""Run the deterministic LabLens analysis from a CSV file."""
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from analysis_core import analyze_linear, detect_candidate_columns, prepare_analysis_data
+
+ROOT = Path(__file__).resolve().parent
+
+
+def analyze_csv(csv_path, output_dir):
+    csv_path = Path(csv_path)
+    try:
+        frame = pd.read_csv(csv_path)
+    except (pd.errors.ParserError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Could not parse CSV: {exc}") from exc
+    current_col = detect_candidate_columns(frame.columns, "current")
+    voltage_col = detect_candidate_columns(frame.columns, "voltage")
+    if current_col is None or voltage_col is None:
+        raise ValueError("Could not identify one unambiguous current and voltage column; use the dashboard to select columns.")
+    prepared = prepare_analysis_data(frame, current_col, voltage_col)
+    result = analyze_linear(prepared["current"], prepared["voltage"])
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cleaned = prepared["data"].copy()
+    cleaned["fitted_voltage_V"] = result["fitted"]
+    cleaned["residual_V"] = result["residuals"]
+    cleaned.to_csv(output_dir / "cleaned_and_fitted_data.csv", index=False)
+    record = {
+        "source_file": csv_path.name, "selected_columns": {"current": str(current_col), "voltage": str(voltage_col)},
+        "original_rows": prepared["original_rows"], "valid_rows": prepared["valid_rows"],
+        "dropped_rows": prepared["dropped_rows"], "model": "V = mI + b",
+        "slope_ohm": result["slope"], "intercept_V": result["intercept"],
+        "r_squared": result["r_squared"], "rmse_V": result["rmse"], "rmse_convention": "sqrt(mean(residual^2)) using denominator n",
+        "provenance": "unknown; not independently verified",
+    }
+    (output_dir / "analysis_results.json").write_text(json.dumps(record, indent=2, allow_nan=False), encoding="utf-8")
+    x, y = prepared["current"], prepared["voltage"]
+    order = np.argsort(x)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(x, y, label="Observed measurements")
+    ax.plot(x[order], np.asarray(result["fitted"])[order], label="OLS fitted model")
+    ax.set(xlabel="Current (selected units)", ylabel="Voltage (selected units)", title="Voltage-current analysis")
+    ax.grid(alpha=.3); ax.legend(); fig.tight_layout(); fig.savefig(output_dir / "voltage_current_fit.png", dpi=160); plt.close(fig)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.axhline(0, color="black", linewidth=1); ax.scatter(x, result["residuals"])
+    ax.set(xlabel="Current (selected units)", ylabel="Residual (selected voltage units)", title="Residuals against current")
+    ax.grid(alpha=.3); fig.tight_layout(); fig.savefig(output_dir / "residuals.png", dpi=160); plt.close(fig)
+    return record
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("csv", nargs="?", type=Path, default=ROOT / "data" / "sample_voltage_current.csv")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "results")
+    args = parser.parse_args()
+    result = analyze_csv(args.csv, args.output_dir)
+    print(json.dumps(result, indent=2))
+    print(f"Saved reproducible analysis artifacts to {args.output_dir.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
