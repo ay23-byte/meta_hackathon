@@ -1,89 +1,124 @@
 # LabLens AI project audit
 
-## Scope
+Date: 26 October 2026. Branch: `arena/9e30a63a-meta-hackathon`.
 
-This audit covers the repository as it exists on branch
-`arena/9e30a63a-meta-hackathon`: `app.py`, `analysis_core.py`,
-`ask_muse.py`, `analyze_experiment.py`, `tests/`, `test_muse.py`,
-`requirements.txt`, `README.md`, and related project files.
+## Scope and baseline
 
-Baseline test run (before changes): `python -m pytest` →
-**22 passed, 1 skipped** (the skip is the optional live Muse Spark test,
-which needs `BASETEN_API_KEY`). After the fixes below: **26 passed, 1
-skipped**.
+Audit covers `app.py`, `analysis_core.py`, `ask_muse.py`,
+`analyze_experiment.py`, `test_muse.py`, `tests/`, packaging, CI, and all
+`docs/`. Baseline before any work: `python -m pytest -v` → **22 passed,
+1 skipped**. First hardening pass: **26 passed, 1 skipped**. Final state:
+**112 passed, 2 skipped**, 98% statement coverage, `ruff check .` clean.
+
+The two skips are the opt-in live Muse Spark tests (`-m live`), which need
+`BASETEN_API_KEY`. No key is present in this environment.
 
 ## Architecture and data flow
 
-CSV upload (or bundled sample) → row preview → user-confirmed current/voltage
-columns and units → `analysis_core.prepare_analysis_data` (numeric conversion,
-invalid-pair exclusion, source-row tracking) →
-`analysis_core.analyze_linear` (ordinary least squares `V = mI + b`, fitted
-values, residuals, R², RMSE) → plots and metrics → optional user-triggered
-Muse Spark interpretation via `ask_muse.generate_interpretation` → strict
-schema validation → Markdown/CSV/JSON exports. The CLI (`analyze_experiment.py`)
-shares the same numerical core.
+CSV upload or bundled sample (bounded to 5 MiB / 200,000 rows) → pandas
+reader with explicit parse errors → alias suggestion plus user-confirmed
+columns and sanitized units → `analysis_core.prepare_analysis_data`
+(positional numeric conversion, invalid-pair exclusion, source-row
+tracking) → `analysis_core.analyze_linear` (centred OLS `V = mI + b`) →
+metrics, plots, hypothetical explorer → optional user-triggered Muse Spark
+interpretation via `ask_muse.generate_interpretation` → strict schema
+validation and SHA-256 context binding → in-memory Markdown/CSV/JSON
+exports. The CLI shares the same numerical core. See
+`docs/ARCHITECTURE.md`.
 
-## Current features and user journey
+## Findings and fixes
 
-1. Welcome/hero with value proposition and scientific safeguards.
-2. CSV upload or automatic bundled sample load.
-3. Column selection with alias suggestion and manual fallback; units input.
-4. Paired-row cleaning with retained/dropped counts and source-row mapping.
-5. OLS fit: slope, intercept, R², RMSE, fit plot, residual plot.
-6. Data-quality warnings (too few points, constant voltage, non-varying current).
-7. Hypothetical follow-up explorer with extrapolation flags.
-8. Reproducible analysis record (JSON record, SHA-256 input fingerprint).
-9. Optional Muse Spark interpretation, schema-validated.
-10. Markdown, cleaned-CSV, and JSON downloads.
+### Correctness and numerical reliability
 
-## Imports and exports verified
+| Severity | Issue | Fix / verification |
+| --- | --- | --- |
+| High | `np.polyfit` returned an intercept near −79 for `x ≈ 1e9`, `y = 5x+2` — a silently wrong scientific result | Replaced with centred normal equations; regression test asserts slope 5, intercept 2. Sample results unchanged to ~1e-16. Independent `np.linalg.lstsq` oracle agrees to ~1e-12 |
+| High | Non-default DataFrame index could misalign paired rows on some pandas versions | Convert columns positionally to NumPy before constructing the result frame; test with a string index |
+| Medium | Overflow / non-finite fit results could escape as JSON | `np.errstate` guards plus finite checks raise `ValueError`; strict `allow_nan=False` serialization |
+| Medium | Constant voltage and constant current edge cases | Explicitly tested; R² is `None`, not 0, when undefined |
+| Medium | Duplicate column names silently dropped (DataFrame API) | Explicit `ValueError`; CSV duplicates are mangled by pandas before reaching the core (documented) |
 
-`app.py` imports from `analysis_core`:
-`analyze_linear`, `detect_candidate_columns`, `prepare_analysis_data`,
-`propose_measurements`, `serialize_analysis_exports` — all exist.
-`app.py` lazily imports `generate_interpretation` from `ask_muse` only when
-the user requests AI interpretation — exists.
-`ask_muse.py` exports `REQUIRED_TITLES`, `build_prompt`, `describe_provider_status`,
-`validate_report`, `generate_interpretation` — all exist.
-`validate_report` enforces exactly the 8 required section titles, each once,
-at most two claims, and all six claim fields.
+### AI provider integration
 
-## Findings
+| Severity | Issue | Fix / verification |
+| --- | --- | --- |
+| High | Request used `system` role and `temperature=0.2`, contrary to Meta's documented guidance for Muse Spark (prefer `developer`, leave sampling at tuned default 1.0) | Switched to `developer`, removed the temperature override, used `max_completion_tokens` to budget reasoning tokens |
+| High | No structured-output request; the model had to produce strict JSON from prompt instructions alone | Requests `response_format={"type": "json_object"}`; on HTTP 400 retries once with a conservative request shape (no JSON mode, legacy `max_tokens`) |
+| High | Live structured-report workflow could not be verified without a key | 29 fake-client contract tests cover request shape, parsing, validation, sanitization, error mapping, fallback, truncation, and reasoning-only output. Clearly labeled as offline, not live |
+| Medium | `reasoning_content` could be mistaken for a report | Never used as a substitute; reasoning-only responses raise a specific error |
+| Medium | Truncated or oversized responses produced vague JSON errors | `finish_reason == "length"` and raw-size checks produce specific errors |
+| Medium | Potential model-ID mismatch for hackathon accounts | `BASETEN_MODEL` override; default stays the officially documented `meta-models/muse-spark-open` |
+| Medium | Context errors were misreported as provider failures | Prompt built before the provider `try`; oversized/unserializable context raises `ValueError` with no network call |
+| Medium | Extra provider keys could reach UI/session/exports | `validate_report` returns a sanitized dict; the app's validator delegates to it (one schema) |
+| Low | HTTP status could be a non-integer object interpolated into messages | `_http_status` coerces to int; generic messages never include raw exception text |
 
-### Fixed in this session
+### Security and input handling
 
-| Severity | Issue | Fix |
-|----------|-------|-----|
-| Critical | Missing `.env.example` referenced by README and setup docs | Created `.env.example` with placeholder `BASETEN_API_KEY` only |
-| High | Pandas 3.x deprecation: `DataFrame.rename(..., inplace=True)` will become an error | Replaced with assignment (`clean = clean.rename(...)`) in `analysis_core.py` and `app.py` |
-| High | Duplicate column names were silently dropped by pandas before validation, causing silent data loss | `prepare_analysis_data` now raises a clear `ValueError` naming duplicated columns |
-| High | Streamlit `use_container_width=True` deprecated in Streamlit 1.66 (removed after 2025-12-31) | Migrated four `st.dataframe` calls to `width="stretch"` |
-| Medium | `test_muse.py` silently skipped when the provider returned empty/malformed output even with credentials | Empty/malformed output with a configured key is now a hard `pytest.fail`; call uses a bounded 30s timeout |
-| Medium | AI report validation in `app.py` was looser than `ask_muse.validate_report` | Harmonized: app now requires the 8 required section titles and all six claim fields |
-| Medium | No visible AI-provider status in the UI | Added provider-status panel (configured/not configured, model, endpoint) and workflow steps to the sidebar |
-| Low | Documentation lived at the root with no `docs/` structure | Moved `ARCHITECTURE.md`, `SCIENTIFIC_VALIDATION.md`, `DEMO_SCRIPT.md`, `EVALUATION_PLAN.md`, `HACKATHON_PITCH.md` into `docs/`; added `docs/HACKATHON_CHECKLIST.md` |
+| Severity | Issue | Fix / verification |
+| --- | --- | --- |
+| High | User-supplied unit text became a CSV column header, allowing spreadsheet formula injection | `safe_unit` strips dangerous characters and prefixes leading `= + - @` with `'`; tested |
+| Medium | Unbounded AI context and report sizes | Hard caps on context, prompt, raw response, section words/chars, claim fields, claim count; tested |
+| Medium | Unbounded CSV upload and row count | 5 MiB / 200,000-row limits with clear UI errors; AppTest verified |
+| Medium | Unbounded explorer candidates / text fields | 50 candidates max, `max_chars` on all text inputs, finite-value checks |
+| Medium | AI output rendered as Markdown could inject links or images | Section content rendered as plain text; titles come from a fixed whitelist |
+| Medium | Untrusted filenames/questions could break the Markdown report | `md_inline` collapses newlines and escapes backticks/pipes |
+| Low | Generated CLI artifacts were tracked in Git and would be overwritten by a run | Untracked and gitignored; `results/README.md` documents regeneration |
 
-### Tests added
+### Reproducibility, packaging, CI
 
-- `tests/test_analysis_core.py::test_duplicate_column_names_are_rejected`
-- `tests/test_pipeline_extended.py::test_generate_interpretation_requires_api_key_and_is_secret_free`
-- `tests/test_pipeline_extended.py::test_export_row_counts_and_metrics_match_analysis`
-- `tests/test_pipeline_extended.py::test_app_ai_report_validation_enforces_required_schema`
+| Severity | Issue | Fix / verification |
+| --- | --- | --- |
+| Medium | `requirements.txt` had only lower bounds while the tested SDK was openai 3.x | Bounded ranges aligned to the tested versions; `requirements.lock.txt` records exact pins |
+| Medium | CLI record lacked the input fingerprint and software versions present in the dashboard | Added SHA-256, versions, cleaning policy, warnings, row counts, method; CLI artifact test verifies both |
+| Medium | `matplotlib` backend not forced headless in CLI | `matplotlib.use("Agg")` before pyplot import |
+| Medium | No lint or coverage gate | `ruff.toml` + `requirements-dev.txt`; `ruff check .` clean, 98% coverage |
+| Medium | No CI | `.github/workflows/ci.yml` for Linux + Windows, Python 3.11/3.12, running lint + offline tests + coverage. **Not executed in this environment** |
+| Low | Documentation described malformed JSON as falling back to model text | Corrected: malformed JSON is rejected outright |
+| Low | Official hackathon rules were unverified | Verified judging weights, deadline, eligibility, themes, credits and submission portal from the official event page and Official Rules; see `docs/HACKATHON_RULES.md` |
 
-### Remaining / unresolved
+## Measured results
 
-- **Live Muse Spark integration is unverified in this environment.** No `BASETEN_API_KEY` is present, so `test_muse.py` is skipped. Earlier direct Baseten calls returned usable content (`"Hello World"`, populated `reasoning_content`) but also some incomplete fragments, so the full structured-report workflow should be re-verified live with a real key before the demo. Do not present mock output as live.
-- **Straight-line fit only.** Nonlinear or weighted models, confidence intervals, parameter standard errors, and instrument uncertainty are not implemented and are explicitly labeled as unavailable. Do not present R² as proof of causation.
-- **OpenAI SDK major version.** `requirements.txt` says `openai>=1.50` while the installed/tested SDK is 3.x. `ask_muse.py` is compatible with 3.x (verified: `max_retries`, `timeout`, `message.content` all work). Pin or bound the SDK in `requirements.txt` before release if a specific major version is desired.
-- **Analysis artifacts (`results/`) are committed to the repo.** They are sample/demo outputs; consider gitignoring generated outputs before submission if they should not be versioned.
-- **Hackathon rules.** The official Meta hackathon rules, judging criteria, deadlines, and submission requirements have not been verified against this repository; confirm authorization, required Meta technology use, and submission format separately.
+| Gate | Result |
+| --- | --- |
+| `python -m pytest -q` | 112 passed, 2 skipped |
+| Coverage (4 application modules) | 98% statements (615 statements, 12 uncovered defensive branches) |
+| `ruff check .` | All checks passed |
+| `python -m compileall -q ...` | clean |
+| Streamlit AppTest | 20 UI tests pass; real script renders with no exceptions |
+| Streamlit server smoke test | starts and returns HTTP 200 |
+| Live Muse Spark | **not verified** — no key |
 
-## Verified behavior
+Sample dataset (`data/sample_voltage_current.csv`, 11 valid rows):
+slope 4.9909090909 V/A, intercept 0.00545454545 V, R² 0.9998029592,
+RMSE 0.0221564684 V. Provenance not independently verified.
 
-- CSV parsing errors, empty files, bad encodings, malformed rows → clear user-facing errors; app stops gracefully.
-- Numeric conversion with explicit dropped-row counts; NaN/infinite values excluded as invalid pairs; source row order preserved.
-- Constant independent variable rejected; undefined R² when voltage has no variance.
-- JSON exports are standards-compliant; non-finite numbers become `null`.
-- Missing `BASETEN_API_KEY` → `RuntimeError` from `generate_interpretation`, no secret in the message.
-- Provider HTTP errors (401/403/404/429) mapped to actionable, secret-free messages.
-- App and deterministic analysis remain fully usable with no API key.
+## Remaining / unresolved
+
+1. **Live Muse Spark round-trip is unverified.** No `BASETEN_API_KEY` here.
+   Run `python -m pytest -m live -v` with a real key before the demo. Do not
+   present offline fake-client results as live verification.
+2. **GitHub Actions has not run here.** The workflow is standard config;
+   confirm both OS jobs pass after pushing.
+3. **Demo video and submission are participant tasks.** See
+   `docs/DEMO_SCRIPT.md` and `docs/HACKATHON_RULES.md`.
+4. **Eligibility and acceptance** must be confirmed in the participant
+   portal; the rules can be modified by the organizers.
+5. **Scientific scope**: unweighted straight-line fit only. No confidence
+   intervals, parameter standard errors, instrument uncertainty, weighting,
+   outlier removal, or provenance verification. R² is never presented as
+   proof of causation.
+6. **Uncovered branches** (12 statements) are defensive guards (non-finite
+   fit output, missing sample file, unreachable validation fallbacks, and
+   the CLI `__main__` line) — not untested features.
+
+## Quality assessment
+
+Against the original 9.5/10 target: correctness, test depth, security,
+reproducibility, documentation, and hackathon alignment are now verified
+with concrete numbers (98% coverage, lint-clean, 112 offline tests,
+official rules checked). The remaining risk is almost entirely external:
+a live provider round-trip, a CI run on GitHub, and the recorded demo and
+submission — none of which can be completed from this environment. On the
+engineering criteria that can be measured here, the project meets the
+9.5/10 bar; do not claim end-to-end live AI verification until item 1 is
+completed.

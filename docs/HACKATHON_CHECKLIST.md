@@ -1,85 +1,129 @@
 # LabLens AI — Hackathon submission checklist
 
-This checklist maps the project's verified features to the acceptance
-criteria and common hackathon judging criteria. Update it as work
-progresses; never mark an item complete unless it has been tested.
+Only items verified in this environment are checked. See
+`docs/HACKATHON_RULES.md` for the source of each official requirement and
+`docs/PROVIDER_INTEGRATION.md` for the live-integration status.
 
-## Acceptance criteria (from project plan)
+## Acceptance criteria
 
-- [ ] The app imports and starts successfully (`import app`, `streamlit run app.py`)
-- [ ] Sample data can be loaded (bundled `data/sample_voltage_current.csv`)
-- [ ] Invalid data is handled transparently (counts of excluded rows shown)
-- [ ] Scientific calculations are deterministic and tested (`pytest`)
-- [ ] Graphs and metrics match the underlying analysis
-- [ ] AI generation handles missing credentials and provider errors
-- [ ] Empty and malformed model responses are rejected
-- [ ] Valid reports satisfy the application's schema (8 required sections)
-- [ ] Reports correspond to the currently selected dataset (context hash)
-- [ ] Exports are consistent with the displayed results (JSON/CSV/Markdown)
-- [ ] No secret is exposed in source control, UI, logs, or exports
-- [ ] The standard test suite passes (`python -m pytest -v`)
-- [ ] The live API status is reported honestly (optional, key-dependent)
-- [ ] Documentation matches actual behavior
-- [ ] The demo script can be executed with the existing project
-- [ ] The submission checklist is complete or lists outstanding items
+- [x] The app imports and starts successfully (`AppTest`, plus a Streamlit
+      server smoke test returning HTTP 200)
+- [x] Sample data loads (bundled `data/sample_voltage_current.csv`, 11 rows)
+- [x] Invalid data is handled transparently (excluded-row counts shown)
+- [x] Scientific calculations are deterministic and tested (112 offline
+      tests, independent `lstsq` oracle)
+- [x] Graphs and metrics match the underlying analysis (CLI artifact test,
+      AppTest metric assertions, residual identity)
+- [x] AI generation handles missing credentials and provider errors
+- [x] Empty, malformed, oversized, and truncated model responses are rejected
+- [x] Valid reports satisfy the application's schema (8 sections, 6 claim
+      fields, size limits; single validator shared by producer and UI)
+- [x] Reports correspond to the currently selected dataset (SHA-256 context
+      hash including the provider model)
+- [x] Exports are consistent with displayed results (JSON/CSV/Markdown)
+- [x] No secret is exposed in source control, UI, logs, or exports
+- [x] Standard offline test suite passes (`python -m pytest -q`)
+- [x] Live API status is reported honestly (optional, key-dependent)
+- [x] Documentation matches actual behavior
+- [x] The demo script can be executed with the existing project
+- [x] This checklist lists outstanding items explicitly
 
 ## Environment and setup
 
-- [ ] `requirements.txt` lists small, justified dependencies
-- [ ] `.env.example` present with placeholders only (no real key)
-- [ ] `.env` excluded from version control (`.gitignore`)
-- [ ] Windows setup steps documented in `README.md`
-- [ ] Virtual environment or Conda setup documented
+- [x] `requirements.txt` lists small, justified, bounded dependencies
+- [x] `requirements.lock.txt` records the exact tested environment
+- [x] `requirements-dev.txt` provides coverage and lint tooling
+- [x] `.env.example` has placeholders only (no real key)
+- [x] `.env` excluded from version control
+- [x] Windows setup steps documented in `README.md`
+- [x] CI workflow added for Linux + Windows / Python 3.11 + 3.12
+      (`.github/workflows/ci.yml`) — **config added; GitHub Actions run not
+      executed in this environment**
+- [ ] Run the CI workflow on GitHub once and confirm both OS jobs pass
 
 ## Deterministic analysis (verified by tests)
 
-- [ ] CSV upload and measurement-column selection
-- [ ] Numeric cleaning with excluded-row counts
-- [ ] Duplicate column names rejected
-- [ ] Linear regression `V = mI + b`: slope, intercept, R², RMSE
-- [ ] Observed-versus-fitted plot and residual plot
-- [ ] Hypothetical measurement explorer with extrapolation flags
-- [ ] Source row correspondence preserved
-- [ ] Constant current rejected; undefined R² handled
+- [x] CSV upload and measurement-column selection
+- [x] Numeric cleaning with excluded-row counts and source-row tracking
+- [x] Duplicate column names rejected (DataFrame API)
+- [x] Numerically stable centred OLS `V = mI + b`: slope, intercept, R², RMSE
+- [x] Observed-versus-fitted plot and residual plot
+- [x] Hypothetical measurement explorer with extrapolation flags
+- [x] Constant current rejected; undefined R² handled
+- [x] Upload size (5 MiB) and row (200,000) limits enforced
 
 ## Muse Spark AI integration
 
-- [ ] Optional interpretation gated on explicit button press
-- [ ] API key never printed, logged, or exported
-- [ ] Missing key → clear warning, app remains usable
-- [ ] Provider errors mapped to actionable, secret-free messages
-- [ ] Empty/malformed model output rejected, not treated as success
-- [ ] Structured report validated against the required schema
-- [ ] AI claims labeled as not independently verified
+- [x] Optional interpretation gated on explicit button press
+- [x] API key never printed, logged, or exported
+- [x] Missing key → clear warning, app remains usable
+- [x] Provider errors mapped to actionable, secret-free messages
+- [x] Empty/malformed/truncated/oversized output rejected, not treated as success
+- [x] Structured report validated against the required schema
+- [x] AI claims labeled as not independently verified
+- [x] AI content rendered as plain text (no link/markup injection)
+- [x] Developer-message + JSON-mode request with one bounded HTTP-400 fallback
+- [x] `developer`/`temperature`/`max_completion_tokens` aligned with Meta's
+      documented conventions
+- [x] `BASETEN_MODEL` override supported for dated hackathon model IDs
+- [ ] **Live end-to-end verification with a real `BASETEN_API_KEY`** (two
+      opt-in live tests: connectivity and structured report)
 
 ## Reproducibility and exports
 
-- [ ] Markdown report download
-- [ ] Cleaned data CSV download
-- [ ] Analysis record JSON download
-- [ ] Source filename and SHA-256 fingerprint recorded
-- [ ] Original/cleaned row counts and cleaning rules recorded
-- [ ] Software versions recorded in the analysis record
-- [ ] AI provider/model and report-generation status recorded
+- [x] Markdown report, cleaned CSV, analysis record JSON downloads
+- [x] Source filename and SHA-256 fingerprint recorded (dashboard + CLI)
+- [x] Original/cleaned row counts and cleaning rules recorded
+- [x] Software versions recorded in the analysis record
+- [x] AI provider/model and report-generation status recorded
+- [x] Generated CLI artifacts are gitignored (`results/README.md`)
+- [x] CSV headers sanitized against spreadsheet formula injection
 
-## Documentation
+## Quality gates (measured 26 Oct 2026)
 
-- [ ] `README.md` — purpose, workflow, setup, tests, limitations
-- [ ] `docs/ARCHITECTURE.md` — matches actual data flow
-- [ ] `docs/SCIENTIFIC_VALIDATION.md` — math definitions and limits
-- [ ] `docs/DEMO_SCRIPT.md` — 2–3 minute truthful demo sequence
-- [ ] `docs/HACKATHON_CHECKLIST.md` — this file
-- [ ] `PROJECT_AUDIT.md` — actual findings, severity, fixes, unresolved items
+- [x] 112 passed, 2 skipped offline (skips = live tests)
+- [x] 98% statement coverage across the four application modules
+- [x] `ruff check .` clean
+- [x] All Python modules byte-compile
+- [x] Streamlit AppTest covers the real UI script and upload paths
+
+## Official rules and submission
+
+- [x] Judging weights recorded from the Official Rules: Impact 30%,
+      Meta AI Tooling 25%, Technical Depth 20%, Demo 25%
+- [x] Theme fit identified ("Push the Frontier": accelerate a scientific
+      experiment)
+- [x] "Built with Muse Spark Open" attribution shown in the UI (Muse Model
+      License requirement)
+- [ ] Confirm accepted-participant status and acceptance of the Official Rules
+- [ ] Confirm track, theme, team members, and Representative
+- [ ] Confirm deadline (4 Nov 2026, 9:00 PM ET) in local time
+- [ ] Confirm whether a public repo, a video length limit, and a
+      "work only during the window" rule apply — not stated in the rules
+      text we read; community guidance says yes for all three
+- [ ] Confirm the Meta technology/credit requirement for the account and the
+      correct Baseten model identifier
+- [ ] Keep the dated git history as evidence of work done in the window
+- [ ] Record and upload the demo video; add the link to the submission
+- [ ] Submit through the Cerebral Valley portal before the deadline
 
 ## Demo readiness
 
-- [ ] Demo script can run with bundled sample data
-- [ ] Fallback path prepared when the API is unavailable
-- [ ] No mock response presented as a live API result
-- [ ] No API key shown during the demo or in recordings
+- [x] Demo script runs with bundled sample data
+- [x] Fallback path prepared when the API is unavailable
+- [x] No mock response presented as a live API result
+- [x] No API key shown in docs, code, or exported records
+- [ ] Demo video recorded (see `docs/DEMO_SCRIPT.md`)
 
-## Notes / outstanding items
+## Explicitly outstanding / unverified
 
-- Live Muse Spark end-to-end verification requires a real
-  `BASETEN_API_KEY` and network access; it is intentionally skipped in
-  the default test suite when credentials are absent.
+1. Live Muse Spark round-trip: no `BASETEN_API_KEY` in this environment.
+   Offline fake-client tests verify our side of the contract, not the
+   provider's availability or the model's reliability in producing the
+   strict JSON schema.
+2. GitHub Actions matrix has not been executed here.
+3. Demo video has not been recorded.
+4. Eligibility, acceptance, and final submission steps are the
+   participant's responsibility.
+5. Scientific scope: straight-line unweighted fit only; no instrument
+   uncertainty, confidence intervals, or provenance verification.

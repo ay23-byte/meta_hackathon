@@ -1,8 +1,13 @@
-
-streamlit>=1.40
-numpy>=1.26
-pandas>=2.1
-matplotlib>=3.8
-python-dotenv>=1.0
-openai>=1.50
-pytest>=8.0
+# LabLens AI runtime + test dependencies.
+# Bounds are chosen to match the versions verified in requirements.lock.txt.
+# Lower bounds were checked against the published wheels:
+#   - streamlit 1.50.0 is the earliest verified to expose width="stretch"
+#     on st.dataframe;
+#   - openai 1.50.0 already supports max_completion_tokens and response_format.
+streamlit>=1.50,<2
+numpy>=1.26,<3
+pandas>=2.1,<4
+matplotlib>=3.8,<4
+python-dotenv>=1.0,<2
+openai>=1.50,<4
+pytest>=8.0,<10

@@ -13,6 +13,8 @@ from analysis_core import (
     serialize_analysis_exports,
 )
 from ask_muse import (
+    MAX_CLAIMS,
+    MAX_SECTION_WORDS,
     REQUIRED_TITLES,
     build_prompt,
     describe_provider_status,
@@ -68,8 +70,8 @@ def test_muse_report_structure_validation_and_fallback():
 
 def test_muse_prompt_limits_report_size_without_omitting_sections():
     prompt = build_prompt({"results": {"n": 4, "rmse": 0.1}})
-    assert "at most 25 words" in prompt
-    assert "at most two claims" in prompt
+    assert f"at most {MAX_SECTION_WORDS} words" in prompt
+    assert f"at most {MAX_CLAIMS} claims" in prompt
     for title in REQUIRED_TITLES:
         assert title in prompt
 

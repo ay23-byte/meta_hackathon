@@ -54,14 +54,22 @@ def prepare_analysis_data(frame, current_col, voltage_col):
             f"{duplicates}. Rename them before uploading."
         )
 
+    # Convert to positional NumPy arrays before building the result frame.
+    # Passing labelled Series into a DataFrame constructor can align on a
+    # non-default index on some pandas versions, silently mis-pairing rows.
+    current = pd.to_numeric(frame[current_col], errors="coerce").to_numpy(
+        dtype=float, na_value=np.nan
+    )
+    voltage = pd.to_numeric(frame[voltage_col], errors="coerce").to_numpy(
+        dtype=float, na_value=np.nan
+    )
+
     selected = pd.DataFrame({
         "source_row": np.arange(1, len(frame) + 1),
-        "current": pd.to_numeric(frame[current_col], errors="coerce"),
-        "voltage": pd.to_numeric(frame[voltage_col], errors="coerce"),
+        "current": current,
+        "voltage": voltage,
     })
 
-    current = selected["current"].to_numpy(dtype=float, na_value=np.nan)
-    voltage = selected["voltage"].to_numpy(dtype=float, na_value=np.nan)
     valid = np.isfinite(current) & np.isfinite(voltage)
 
     clean = selected.loc[valid].copy().reset_index(drop=True)
@@ -73,14 +81,26 @@ def prepare_analysis_data(frame, current_col, voltage_col):
         "data": clean,
         "current": clean["current_A"].to_numpy(dtype=float),
         "voltage": clean["voltage_V"].to_numpy(dtype=float),
-        "original_rows": int(len(frame)),
-        "valid_rows": int(len(clean)),
+        "original_rows": len(frame),
+        "valid_rows": len(clean),
         "dropped_rows": int(len(frame) - len(clean)),
     }
 
 
 def analyze_linear(current, voltage):
-    """Fit V = mI + b using ordinary least squares."""
+    """Fit V = mI + b using ordinary least squares.
+
+    The slope is computed from centred variables
+    ``sum((x-xbar)(y-ybar)) / sum((x-xbar)^2)`` and the intercept from
+    ``ybar - slope*xbar``. This is algebraically the same OLS line as
+    ``np.polyfit`` but stays accurate when measurements have a large offset
+    relative to their spread (e.g. currents recorded around 1e9 A), where
+    an uncentred design matrix can produce a badly wrong intercept.
+
+    R² is ``1 - ss_res/ss_tot`` and is ``None`` when ``ss_tot == 0``
+    (constant voltage), because R² is undefined rather than zero there.
+    RMSE uses denominator n, not n-2.
+    """
     x = np.asarray(current, dtype=float).reshape(-1)
     y = np.asarray(voltage, dtype=float).reshape(-1)
 
@@ -93,20 +113,44 @@ def analyze_linear(current, voltage):
     if np.ptp(x) == 0:
         raise ValueError("Current measurements must vary to estimate a slope.")
 
-    slope, intercept = np.polyfit(x, y, 1)
-    fitted = slope * x + intercept
-    residuals = y - fitted
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            x_center = x - x.mean()
+            y_center = y - y.mean()
+            denominator = float(np.dot(x_center, x_center))
 
-    ss_res = float(np.sum(residuals**2))
-    ss_tot = float(np.sum((y - np.mean(y))**2))
+            if denominator <= 0 or not np.isfinite(denominator):
+                raise ValueError(
+                    "Current spread is too small to estimate a slope reliably."
+                )
+
+            slope = float(np.dot(x_center, y_center) / denominator)
+            intercept = float(y.mean() - slope * x.mean())
+            fitted = slope * x + intercept
+            residuals = y - fitted
+
+            ss_res = float(np.dot(residuals, residuals))
+            ss_tot = float(np.dot(y_center, y_center))
+            r_squared = float(1 - ss_res / ss_tot) if ss_tot > 0 else None
+            rmse = float(np.sqrt(np.mean(residuals**2)))
+    except FloatingPointError as exc:
+        raise ValueError(
+            "Measurements are too large or too closely spaced for a "
+            "reliable floating-point fit."
+        ) from exc
+
+    if not np.all(np.isfinite([slope, intercept, rmse])):
+        raise ValueError("The fitted line produced non-finite results.")
+    if not np.all(np.isfinite(fitted)) or not np.all(np.isfinite(residuals)):
+        raise ValueError("The fitted line produced non-finite predictions.")
 
     return {
-        "slope": float(slope),
-        "intercept": float(intercept),
+        "slope": slope,
+        "intercept": intercept,
         "fitted": fitted.tolist(),
         "residuals": residuals.tolist(),
-        "r_squared": float(1 - ss_res / ss_tot) if ss_tot > 0 else None,
-        "rmse": float(np.sqrt(np.mean(residuals**2))),
+        "r_squared": r_squared,
+        "rmse": rmse,
         "n": int(x.size),
     }
 
