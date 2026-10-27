@@ -66,12 +66,24 @@ def test_polynomial_and_exponential_models_export_successfully(tmp_path):
 
 
 def test_messy_import_keeps_invalid_rows_in_cleaned_csv(tmp_path):
-    result = analyze_dataset.analyze_csv(EXAMPLES / "synthetic_messy_semicolon.csv", tmp_path)
+    # Generate the cp1252 bytes in-memory. A checked-in non-UTF-8 fixture can
+    # be silently re-encoded by tooling (a workspace snapshot turned 0xB0 into
+    # U+FFFD), which would make an encoding-fallback test fail for the wrong
+    # reason. Encoding fallback is asserted separately in test_encoding_fallback.py.
+    text = (
+        "temperature_deg\u00b0C;pressure_kPa;replicate\n"
+        "20.0;101.3;R1\n25.0;103.8;R1\n30.0;oops;R2\n35.0;108.1;R2\n"
+        ";110.4;R3\n45.0;inf;R3\n50.0;114.7;R4\n55.0;117.2;R4\n"
+    )
+    path = tmp_path / "generated_cp1252.csv"
+    path.write_bytes(text.encode("cp1252"))
+    result = analyze_dataset.analyze_csv(path, tmp_path)
     cleaned = pd.read_csv(tmp_path / "cleaned_data.csv")
     assert len(cleaned) == result["source"]["rows"] == 8
     assert result["cleaning"]["rows_out"] == 8
     assert result["cleaning"]["invalid_pair_rows_excluded"] >= 2
     assert result["source"]["encoding"] == "cp1252"
+    assert "temperature_deg\u00b0C" in result["source"]["columns"]
 
 
 def test_clear_errors_for_invalid_config(tmp_path):

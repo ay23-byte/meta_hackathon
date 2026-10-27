@@ -81,7 +81,7 @@ Only items verified in this environment are checked. See
 
 ## Quality gates (measured 26 Oct 2026)
 
-- [x] 229 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
+- [x] 327 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
 - [x] 98% statement coverage across the four application modules
 - [x] `ruff check .` clean
 - [x] All Python modules byte-compile
@@ -136,3 +136,19 @@ Only items verified in this environment are checked. See
 6. Two Streamlit entry points exist: `general_app.py` (general platform,
    steps A-G) and the preserved `app.py` (original sample workflow). Decide
    which to show first in the demo.
+
+
+## Bounded analysis agent (added 27 Oct 2026)
+
+- [x] Observable plan -> validate -> execute -> diagnose -> retry -> interpret loop
+- [x] Closed 10-tool registry; no arbitrary code execution (static + dispatch tests)
+- [x] Strict plan validation before execution; rejected plan falls back
+- [x] Test that validated AI plans actually change the executed tool sequence
+- [x] Bounded retries, steps, wall time, dataset size and model complexity
+- [x] Destructive-tool consent gate (default off)
+- [x] `INSUFFICIENT_EVIDENCE` and `NEEDS_CLARIFICATION` terminal states
+- [x] Deterministic numbers only; AI reports must pass a numeric grounding check
+- [x] Structured audit trail (JSON / JSONL / Markdown / Mermaid) with evidence refs
+- [x] Five synthetic demo cases, strict mode passing
+- [x] Standard A-G pipeline remains usable with no key
+- [ ] Live Muse Spark plan -> execution round trip (no `BASETEN_API_KEY` here)

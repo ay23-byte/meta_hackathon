@@ -77,6 +77,43 @@ not hardcode those column names or units.
 computed **only** when the user selects that layer *and* supplies a consistent
 current/voltage unit pair. Filenames and column names never select a domain.
 
+## Bounded analysis agent (observable autonomy)
+
+LabLens is not just a CSV dashboard with an AI summary. An **Analysis
+Orchestrator** (`agent_core.py`) runs a bounded, testable loop:
+
+1. `inspect_dataset` produces a structured data-quality summary.
+2. Muse Spark (or an offline fallback) proposes a plan of tool names and
+   parameters — **never code**.
+3. `validate_plan` rejects unknown tools, bad parameters, forbidden tokens and
+   oversized plans before anything executes.
+4. A closed registry (`docs/TOOL_REGISTRY.md`) dispatches ten validated
+   Python tools: statistics, correlation, plotting, fitting and diagnostics.
+5. Deterministic diagnostics inspect the actual fit; poor fits trigger a
+   bounded retry with a validated alternative model.
+6. The agent may stop with `INSUFFICIENT_EVIDENCE` or `NEEDS_CLARIFICATION`.
+7. The final conclusion is assembled from executed tool outputs; optional AI
+   sections are rejected if they contain numbers absent from those outputs.
+8. Every plan, validation decision, tool call, result, retry and conclusion is
+   written to `agent_audit.json`, `agent_events.jsonl` and `agent_report.md`.
+
+Limits: 8 steps, 2 retries, 3 fit attempts, 5 s per tool, 30 s per run,
+50,000 rows, 20 columns, polynomial degree <= 4. No `eval`, no shell, no
+arbitrary paths, no row deletion or imputation. Destructive tools require an
+explicit, default-off UI consent checkbox.
+
+```bash
+python run_agent_demo.py --case all --strict --output-dir outputs/agent_demo
+python analyze_dataset.py data/agent_examples/case_b_curved.csv --agent --output-dir outputs/agent
+```
+
+Five synthetic cases cover success (A), poor initial fit with a validated
+alternative (B), no justifiable model (B'), messy-data recovery (C) and an
+ambiguous schema requiring clarification (C'). Everything runs offline; with
+`BASETEN_API_KEY` set, `--use-ai` / `--agent-use-ai` let Muse Spark propose the
+plan. See `docs/AGENT_WORKFLOW.md` for the diagram, verification matrix and the
+explicit list of live-unverified behaviours.
+
 ## Quick start
 
 ### Linux / macOS
@@ -139,11 +176,14 @@ python -m compileall -q *.py
 Measured in this repository on 27 Oct 2026 (Linux, CPython 3.11,
 pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
 
-- **229 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
-  117 new tests were added to the original 112.
+- **327 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
+  98 new agent/encoding tests were added on top of the 229-test platform suite.
 - `ruff check .` clean; `python -m compileall -q *.py` exits 0.
-- **91% statement coverage** of the nine new deterministic modules plus the
-  general CLI (1,338 of 1,463 statements; per module 87-98%).
+- **91% statement coverage** of the nine original general-purpose modules plus
+  the general CLI (1,338 of 1,463 statements; per module 87-98%), and **90%**
+  of the six agent modules (806 of 899 statements; per module 83-98%).
+  Five-case agent demo passes `--strict` with all observed states matching
+  expectations.
 - Streamlit `AppTest` runs both UI scripts, including different-column uploads,
   role changes, cleaning previews, invalid inputs, AI validation and exports.
 - Local Streamlit HTTP smoke test: `/` and `/_stcore/health` returned 200 for
@@ -153,9 +193,13 @@ pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
 - See `docs/IMPLEMENTATION_REPORT.md` for the exact commands, per-phase status,
   acceptance assessment and open items.
 
-Offline fake-client tests verify **our side** of the provider contract. No
-`BASETEN_API_KEY` was configured here, so the live Baseten integration remains
-**unverified**; `docs/PROVIDER_INTEGRATION.md` describes the contract.
+Offline fake-client tests verify **our side** of the provider contract, and
+orchestrator tests prove that two different *validated* plans produce two
+different executed tool sequences. No `BASETEN_API_KEY` was configured here, so
+the live Baseten integration — including a real Muse-proposed plan driving a
+real run — remains **unverified**. `docs/PROVIDER_INTEGRATION.md` describes the
+contract; `docs/AGENT_WORKFLOW.md` lists exactly which agent behaviours are
+implemented, verified offline, and still unverified live.
 
 ## Optional Muse Spark setup
 
@@ -203,6 +247,8 @@ Other limitations:
 
 ## Documentation
 
+- `docs/AGENT_WORKFLOW.md` - agent diagram, bounds, three demo cases, verification matrix
+- `docs/TOOL_REGISTRY.md` - the closed allowlist and parameter specs
 - `docs/GENERAL_PLATFORM.md` - module map, result schema, design decisions
 - `docs/IMPLEMENTATION_REPORT.md` - measured results, changes and open items
 - `PROJECT_AUDIT.md` - historical audit of the original sample workflow

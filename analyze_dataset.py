@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 import ask_muse
+from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
@@ -252,7 +253,26 @@ def build_parser():
     parser.add_argument("--ai", action="store_true", help="Request an optional Muse Spark report.")
     parser.add_argument("--section", action="append", dest="sections",
                         help="Report section title (repeatable; default: the eight legacy sections).")
+    parser.add_argument("--agent", action="store_true",
+                        help="Also run the bounded analysis agent and write its audit trail.")
+    parser.add_argument("--agent-use-ai", action="store_true",
+                        help="Let Muse Spark propose the agent plan (requires BASETEN_API_KEY).")
     return parser
+
+
+def run_agent(path, output_dir, *, use_ai: bool = False) -> dict:
+    """Run the bounded agent on the same input and write audit artifacts."""
+    load = read_csv_robust(Path(path), source_name=Path(path).name)
+    run = AnalysisOrchestrator(OrchestratorConfig(use_ai=use_ai)).run(load)
+    destination = Path(output_dir) / "agent"
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "agent_audit.json").write_bytes(run.to_json_bytes())
+    (destination / "agent_events.jsonl").write_bytes(run.to_jsonl())
+    (destination / "agent_report.md").write_text(run.to_markdown(), encoding="utf-8")
+    data = run.to_dict()
+    return {"state": data["final"]["state"], "plan_source": data["plan_source"],
+            "steps": data["totals"]["steps"], "retries": data["totals"]["retries"],
+            "directory": str(destination)}
 
 
 def main(argv=None):
@@ -284,6 +304,16 @@ def main(argv=None):
         print(f"Reason: {fit.get('reason')}")
     if result.get("ai_note"):
         print(result["ai_note"])
+    if args.agent:
+        use_ai = bool(args.agent_use_ai and os.getenv("BASETEN_API_KEY", "").strip())
+        try:
+            agent_summary = run_agent(args.csv, args.output_dir, use_ai=use_ai)
+        except Exception as exc:
+            print(f"Error: agent failed ({type(exc).__name__}).", file=sys.stderr)
+            return 2
+        print(f"Agent state: {agent_summary['state']} | plan: {agent_summary['plan_source']} "
+              f"| steps: {agent_summary['steps']} | retries: {agent_summary['retries']}")
+        print(f"Agent audit: {agent_summary['directory']}")
     print(f"Artifacts written to: {Path(args.output_dir).resolve()}")
     print(json.dumps({"schema_version": result["schema_version"]}, ensure_ascii=False))
     return 0

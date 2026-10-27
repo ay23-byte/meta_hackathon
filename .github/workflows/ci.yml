@@ -42,6 +42,8 @@ jobs:
           --cov=data_io --cov=column_inference --cov=cleaning
           --cov=statistics_core --cov=fitting_core --cov=visualization_core
           --cov=domain_modules --cov=result_schema --cov=analyze_dataset
+          --cov=agent_tools --cov=agent_planner --cov=agent_diagnostics
+          --cov=agent_audit --cov=agent_core
           --cov-report=term-missing
 
       - name: Verify byte-compilation

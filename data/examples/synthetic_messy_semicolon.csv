@@ -1,4 +1,4 @@
-temperature_deg°C;pressure_kPa;replicate
+temperature_degÂ°C;pressure_kPa;replicate
 20.0;101.3;R1
 25.0;103.8;R1
 30.0;oops;R2

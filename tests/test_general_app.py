@@ -133,7 +133,14 @@ def test_different_column_csv_upload_and_role_change():
 
 
 def test_messy_csv_reports_cleaning_and_keeps_invalid_rows():
-    raw = (ROOT / "data" / "examples" / "synthetic_messy_semicolon.csv").read_bytes()
+    # Build cp1252 bytes at test time so a tooling round-trip cannot corrupt a
+    # checked-in non-UTF-8 fixture (see docs/AGENT_WORKFLOW.md, known issue).
+    text = (
+        "temperature_deg\u00b0C;pressure_kPa;replicate\n"
+        "20.0;101.3;R1\n25.0;103.8;R1\n30.0;oops;R2\n35.0;108.1;R2\n"
+        ";110.4;R3\n45.0;inf;R3\n50.0;114.7;R4\n55.0;117.2;R4\n"
+    )
+    raw = text.encode("cp1252")
     at = run_app()
     at.file_uploader[0].set_value(("messy.csv", raw, "text/csv")).run()
     assert not at.exception
