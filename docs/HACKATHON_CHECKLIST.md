@@ -121,7 +121,10 @@ Only items verified in this environment are checked. See
    Offline fake-client tests verify our side of the contract, not the
    provider's availability or the model's reliability in producing the
    strict JSON schema.
-2. GitHub Actions matrix has not been executed here.
+2. ~~GitHub Actions matrix has not been executed here.~~ **Resolved 27 Oct
+   2026:** PR #2 ran the full 2x2 matrix (Ubuntu/Windows x Python 3.11/3.12);
+   all four jobs passed, including lint, offline tests with coverage, and
+   byte-compilation.
 3. Demo video has not been recorded.
 4. Eligibility, acceptance, and final submission steps are the
    participant's responsibility.

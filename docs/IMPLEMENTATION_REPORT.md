@@ -41,6 +41,7 @@ Streamlit 1.66.1, Matplotlib 3.11.2, pytest 9.1.1):
 | CLI on sample (`--domain ohmic --unit-x A --unit-y V`) | 16 artifacts written; slope 4.99091, R² 0.999803, candidate resistance 4.99091 ohm |
 | CLI on calibration example with `--uncertainty abs_sigma` | Weighted fit enabled; slope 0.0817171 |
 | CLI on messy cp1252/semicolon example | cp1252 detected, 8 rows retained, invalid rows excluded from fit but kept in cleaned CSV |
+| GitHub Actions CI on PR #2 | `gh pr checks 2 --watch` → **4/4 jobs passed** (Ubuntu + Windows x Python 3.11 + 3.12); lint, offline tests with coverage, byte-compilation |
 
 The two skipped tests are the opt-in live Muse Spark tests in `test_muse.py`.
 No `BASETEN_API_KEY` was set in this environment. Provider behaviour was
