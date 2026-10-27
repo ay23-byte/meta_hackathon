@@ -67,8 +67,10 @@ def test_case_c_recovers_from_invalid_values_without_deleting_rows():
     assert quality["n_valid_pairs"] == 6
     assert quality["missing"] == 1 and quality["invalid"] == 1 and quality["nonfinite"] == 1
     assert any(event["phase"] == "recovery" for event in data["events"])
+    inspection = next(event for event in data["events"]
+                      if event["tool"] == "inspect_dataset" and event["status"] == "ok")
     assert any("no values were imputed" in warning
-               for warning in data["events"][0]["result_digest"]["warnings"])
+               for warning in inspection["result_digest"]["warnings"])
 
 
 def test_case_c_ambiguous_requests_clarification_before_any_fit():

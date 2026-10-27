@@ -133,3 +133,40 @@ exact for OLS. Provenance and units are user supplied or unknown. The
 bundled sample dataset has no independently verified origin. Live Muse
 Spark end-to-end behaviour has not been verified in this environment;
 see `docs/PROVIDER_INTEGRATION.md`.
+
+---
+
+## Master-prompt validation additions (27 Oct 2026)
+
+All numbers below come from tests actually executed on this branch; synthetic
+datasets are labelled as such and are not experimental evidence.
+
+- **Evidence IDs.** `result_schema.evidence_index()` produces bounded,
+  ASCII-safe IDs (`dataset.source`, `cleaning.summary`, `corr.pearson`,
+  `fit.linear`, `compare.*`, `stat.*`, `outliers.summary`) mapped to computed
+  values. `ai_context()` keeps `result_ids` and `evidence_index` consistent
+  even when trimming to `max_chars`; a 4,000-character context test passes.
+  `ask_muse.validate_report(..., allowed_evidence_ids=...)` rejects missing,
+  unknown, duplicate, oversized and malformed IDs.
+- **Offline mock grounding.** `generate_mock_report()` quotes only values from
+  the supplied computed context. On the bundled sample, the mock reports
+  slope 4.99091, intercept 0.00545455, R² 0.999803, RMSE 0.0221565 and n=11 —
+  exactly the CLI's deterministic outputs. It is labelled NOT AI in
+  `results.json`, `report.md` and the UI.
+- **Model comparison tool.** On `y = 2x + 1` (10 synthetic points),
+  `compare_models(["linear", "polynomial"])` returns two successful rows with
+  R² ≈ 1.0 and `n_observations == 10`; an unknown model is rejected before
+  execution.
+- **Evidence summary tool.** After one fit, `evidence_summary()` returns one
+  result ID, `n_fits == 1`, and `n_valid_pairs == 10`.
+- **Time-series summary tool.** On `y = 2x + 1` with `x = 0..9`,
+  `time_series_summary(max_lag=2)` returns `n_points == 10`, `mean_step == 2.0`,
+  lag-1 Pearson correlation ≈ 1.0, and a note disclaiming forecasting. `max_lag=9`
+  is rejected by the parameter bound.
+- **Bounded retries.** A fake provider returning HTTP 503 three times produces
+  exactly `MAX_TRANSIENT_RETRIES + 1 == 3` local attempts, then a safe error;
+  HTTP 401 produces one attempt; one 503 followed by a valid report succeeds in
+  two attempts.
+- **Full offline suite.** `pytest -q` → **348 passed, 2 skipped**; the two
+  skips are the opt-in live Muse Spark tests. `pytest -m live -q` → 2 skipped,
+  348 deselected. No live scientific claim is made.

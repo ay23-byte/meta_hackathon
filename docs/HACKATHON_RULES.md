@@ -54,8 +54,8 @@ This is a **self-assessment, not a score from any judge**.
 | --- | --- | --- | --- |
 | Impact | 30% | Reproducible scientific analysis workflow; explicit cleaning, uncertainty and provenance caveats; downloadable audit record | No measured user adoption, no time-saved study — do not claim one |
 | Use of Meta AI Tooling | 25% | Muse Spark Open via Baseten with developer-message instructions, JSON mode, strict schema validation, evidence-linked claims, and a context-hash binding | Live provider round-trip still needs a key in this environment |
-| Technical Depth & Execution | 20% | Numerically stable centred OLS, 112 offline tests, 98% statement coverage, AppTest UI tests, CLI/dashboard shared core, lint-clean CI | Single straight-line model; no instrument uncertainty |
-| Demo | 25% | Working Streamlit dashboard on bundled data, real-time plots, three exports, honest no-key fallback | Record the video live; never show a mock as a live AI result |
+| Technical Depth & Execution | 20% | Numerically stable centred OLS plus five model families and weighted fits, 348 offline tests, AppTest UI tests, 13-tool bounded agent, CLI/dashboard shared core, lint-clean Linux/Windows CI | CSV/TSV input only; no calibrated instrument uncertainty; no causal inference |
+| Demo | 25% | Primary `general_app.py` dashboard, real-time plots, three exports, seven reproducible A-E agent cases, honest provider status and an explicitly labelled OFFLINE MOCK fallback | Record the video live; never present the mock as a live AI result |
 
 ## Pre-submission checklist
 

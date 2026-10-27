@@ -28,8 +28,10 @@ def test_agent_section_is_present_but_opt_in():
     assert any("Run the bounded analysis agent" in label for label in labels)
     assert any("Allow destructive agent tools" in label for label in labels)
     assert "Agent not run." in " ".join(item.value for item in at.get("caption"))
-    # Existing UI contract must remain intact.
-    assert len(at.button) == 1
+    # Existing UI contract stays intact; the second button is the explicitly
+    # labelled offline MOCK preview (never a silent AI substitute).
+    assert len(at.button) == 2
+    assert "OFFLINE MOCK" in at.button[1].label
     assert len(at.get("download_button")) == 3
 
 

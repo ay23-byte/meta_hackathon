@@ -123,10 +123,20 @@ def step_header(letter: str, title: str, caption: str):
 with st.sidebar:
     st.title("LabLens AI")
     st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
-    if os.getenv("BASETEN_API_KEY", "").strip():
-        st.info(f"Muse Spark key configured. Model: {ask_muse.MODEL}")
+    provider = ask_muse.provider_status()
+    if provider["api_key_configured"]:
+        st.info(f"Muse Spark key configured. Model: {provider['model']}. "
+                "Live reachability is NOT verified until a report is requested.")
     else:
-        st.info("Muse Spark key not configured — deterministic analysis and exports still work.")
+        st.info("Muse Spark key not configured — deterministic analysis, exports and the "
+                "labelled offline MOCK report still work.")
+    with st.expander("Provider status (honest configuration check)"):
+        st.json({key: provider[key] for key in (
+            "provider", "base_url", "model", "api_key_configured", "key_source",
+            "env_file_present", "mode", "live_call_attempted", "live_verified",
+            "offline_mock_available", "max_transient_retries",
+        )})
+        st.caption(provider["message"])
     st.markdown("**Workflow**")
     for letter, label in (
         ("A", "Upload"), ("B", "Validate / Clean"), ("C", "Configure"),
@@ -332,14 +342,27 @@ if secondary_y:
         "dual axes can imply relationships that depend only on scale choices."
     )
 
-section_options = list(ask_muse.SECTION_REGISTRY)
+report_profile = st.selectbox(
+    "AI report profile", list(ask_muse.REPORT_PROFILES),
+    index=list(ask_muse.REPORT_PROFILES).index(ask_muse.DEFAULT_REPORT_PROFILE),
+    format_func=lambda key: {
+        "legacy": "Legacy eight-section report (default)",
+        "scientific": "Scientific report (research question, methods, fit, next steps)",
+    }[key],
+    help="Both profiles use the same strict schema. The legacy profile preserves the original eight titles.",
+)
+section_registry = ask_muse.section_registry(report_profile)
+default_titles = list(ask_muse.resolve_section_titles(None, profile=report_profile))
+section_options = list(section_registry)
 selected_sections = st.multiselect(
     "AI report sections (optional)", section_options,
-    default=list(ask_muse.REQUIRED_TITLES),
-    help="A maximum of ten registered sections is allowed. Unknown or duplicate names are rejected.",
+    default=default_titles,
+    help=f"A maximum of {len(section_options)} registered sections is allowed. "
+         "Unknown or duplicate names are rejected.",
 )
 if not selected_sections:
-    st.info("No AI sections selected; the default eight will be used if you request a report.")
+    st.info(f"No AI sections selected; the profile's {len(default_titles)} default sections will be used.")
+effective_titles = list(selected_sections) if selected_sections else default_titles
 
 
 # ---------------------------------------------------------------------------
@@ -516,14 +539,16 @@ try:
             "Interactive HTML plots load Vega-Lite from a CDN; PNG plots are rendered locally.",
         ],
     )
-    context = ai_context(result)
+    context = ai_context(result, research_question=question)
     context_hash = _hash({
         "result": {key: result[key] for key in (
             "source", "roles", "cleaning", "statistics", "correlation", "outliers",
             "fit", "model_comparison", "domain", "warnings",
         )},
-        "sections": list(selected_sections or ask_muse.REQUIRED_TITLES),
+        "sections": effective_titles,
+        "profile": report_profile,
         "question": question,
+        "result_ids": context.get("result_ids"),
         "model": ask_muse.MODEL,
     })
 except Exception as exc:
@@ -696,34 +721,78 @@ if values:
 # F · Interpret (optional AI)
 # ---------------------------------------------------------------------------
 
-step_header("F", "Interpret", "Muse Spark is optional. AI text is generated only from the computed results above.")
+step_header("F", "Interpret", "Live Muse Spark is optional. Computed results above are authoritative; "
+            "AI text and the explicitly labelled offline MOCK are never experimental evidence.")
+st.caption(f"Provider status: {provider['message']} "
+           f"(live_verified={str(provider['live_verified']).lower()}, "
+           f"mock_available={str(provider['offline_mock_available']).lower()}).")
+
+
+def store_validated_report(wrapper, titles):
+    """Second, local validation of ANY report (live or mock) before storage."""
+    structured = ask_muse.validate_report(
+        wrapper.get("structured"), titles, profile=report_profile,
+        allowed_evidence_ids=context.get("result_ids"),
+    )
+    if structured is None:
+        st.error("Report rejected: incomplete report or strict schema validation "
+                 "failure; nothing was stored.")
+        return
+    wrapper["structured"] = structured
+    st.session_state["ai_state"] = {"hash": context_hash, "wrapper": wrapper}
+    result["ai"] = wrapper
+    st.rerun()
+
 
 if st.button("Generate evidence-grounded interpretation", type="primary"):
     if not os.getenv("BASETEN_API_KEY", "").strip():
         st.warning("BASETEN_API_KEY is not set; AI interpretation is unavailable. "
-                   "All deterministic results and exports remain available.")
+                   "All deterministic results and exports remain available. "
+                   "Use the labelled offline MOCK button below for a deterministic preview.")
     else:
         try:
-            titles = list(selected_sections) if selected_sections else list(ask_muse.REQUIRED_TITLES)
-            wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
+            titles = list(effective_titles)
+            if report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
+                wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
+            else:
+                wrapper = ask_muse.generate_interpretation(
+                    context, section_titles=titles, profile=report_profile
+                )
         except (ValueError, RuntimeError) as exc:
             st.error(f"Muse Spark request failed: {_safe_error(exc)}")
+            st.info("Deterministic results and exports are unaffected. The offline MOCK "
+                    "button below gives a labelled template preview, NOT an AI response.")
         except Exception as exc:
             st.error(f"Muse Spark request failed: {_safe_error(exc)}")
+            st.info("Deterministic results and exports are unaffected. The offline MOCK "
+                    "button below gives a labelled template preview, NOT an AI response.")
         else:
-            structured = ask_muse.validate_report(wrapper.get("structured"), titles)
-            if structured is None:
-                st.error("Muse Spark returned an incomplete report; it was rejected and nothing was stored.")
-            else:
-                wrapper["structured"] = structured
-                st.session_state["ai_state"] = {"hash": context_hash, "wrapper": wrapper}
-                result["ai"] = wrapper
-                st.rerun()
+            store_validated_report(wrapper, titles)
+
+if st.button("Preview deterministic OFFLINE MOCK report (no API key, NOT AI)",
+             key="offline_mock_report"):
+    try:
+        wrapper = ask_muse.generate_mock_report(
+            context, section_titles=list(effective_titles),
+            profile=report_profile, research_question=question,
+        )
+    except (ValueError, RuntimeError) as exc:
+        st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+    except Exception as exc:
+        st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+    else:
+        store_validated_report(wrapper, list(effective_titles))
 
 if result.get("ai"):
     wrapper = result["ai"]
-    st.markdown("### Muse Spark report (AI-generated, unverified)")
-    st.caption(f"Provider model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
+    is_mock = bool(wrapper.get("is_mock") or wrapper.get("source") == "offline_mock")
+    if is_mock:
+        st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
+        st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
+        st.caption(f"Generator: {wrapper.get('model')}. No provider request was made.")
+    else:
+        st.markdown("### Muse Spark report (AI-generated, unverified)")
+        st.caption(f"Provider model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
     for section in wrapper["structured"]["sections"]:
         st.markdown(f"**{section['title']}**")
         st.text(section["content"])
@@ -731,12 +800,16 @@ if result.get("ai"):
         st.markdown("**Evidence-linked claims**")
         for index, claim in enumerate(wrapper["structured"]["claims"], start=1):
             st.markdown(f"**Claim {index}** ({claim['evidence_type']}): {claim['claim']}")
+            ids = claim.get("evidence_ids") or []
+            id_text = f" · Computed result IDs: {', '.join(ids)}" if ids else ""
             st.caption(f"Evidence: {claim['evidence']} · Limitation: {claim['limitation']} · "
-                       f"Verification: {claim['proposed_verification']}")
-    st.info("This report was generated from the deterministic context only. "
-            "Verify every quantitative statement against sections D and E.")
+                       f"Verification: {claim['proposed_verification']}{id_text}")
+    st.info("This report was built from the deterministic context only. "
+            "Verify every quantitative statement against sections D and E. "
+            "Never present the offline MOCK as a live AI response.")
 else:
-    st.caption("No AI report has been generated. The app works fully without an API key.")
+    st.caption("No report has been generated. The app works fully without an API key; "
+               "the offline MOCK is always labelled as a mock.")
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +840,7 @@ if agent_consent:
             agent_run = AnalysisOrchestrator(OrchestratorConfig(
                 use_ai=bool(agent_use_ai and os.getenv("BASETEN_API_KEY", "").strip()),
                 user_confirmed=agent_destructive,
+                research_question=question,
             )).run(load)
         except Exception as exc:
             st.error(f"The agent could not complete: {_safe_error(exc)}")
@@ -783,10 +857,18 @@ if agent_consent:
         a2.metric("Plan source", agent_data["plan_source"].replace("_", " "))
         a3.metric("Tool steps", str(agent_data["totals"]["steps"]))
         a4.metric("Retries", str(agent_data["totals"]["retries"]))
+        st.caption(f"Research question ({agent_data['question_source']}): "
+                   f"{agent_data['research_question']}")
         st.caption(
             "AI decisions = planning/selection. DETERMINISTIC TOOL rows are computed results "
             "from validated Python functions. No model-generated code is executed."
         )
+        clarification = agent_data["final"].get("clarification")
+        if clarification:
+            st.warning("The agent needs clarification before running any tool. "
+                       + " ".join(clarification.get("reasons") or []))
+            for option in clarification.get("options") or []:
+                st.caption(f"• {option}")
         event_rows = [
             {
                 "#": event["seq"], "Phase": event["phase"],
@@ -845,7 +927,7 @@ d3.download_button("Download full bundle (ZIP)", zip_payload,
 st.caption(
     "The ZIP contains: " + ", ".join(sorted(exports)) + ". "
     "The Markdown report includes computed results, limitations, and (only if generated) "
-    "clearly labelled AI hypotheses."
+    "clearly labelled AI hypotheses or an explicitly labelled OFFLINE MOCK report."
 )
 with st.expander("Preview Markdown report"):
     try:

@@ -1,4 +1,4 @@
-"""Reproducible three-case demonstration of the analysis agent.
+"""Reproducible five-scenario A-E demonstration of the analysis agent.
 
 Runs entirely offline by default (deterministic fallback planner). With
 BASETEN_API_KEY set, pass --use-ai to let Muse Spark propose the plan and the
@@ -16,6 +16,7 @@ import os
 import sys
 from pathlib import Path
 
+import ask_muse
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from data_io import read_csv_robust
 
@@ -54,7 +55,108 @@ CASES = {
         "expected_state": "NEEDS_CLARIFICATION",
         "expected_behaviour": "Duplicate header names force a clarification request before any fitting.",
     },
+    "d": {
+        "file": "case_a_linear.csv",
+        "title": "D - ambiguous research question",
+        "expected_state": "NEEDS_CLARIFICATION",
+        "question": "Is it good?",
+        "expected_behaviour": "A vague question triggers clarification with three concrete options; no tool is executed.",
+    },
+    "e": {
+        "file": "case_a_linear.csv",
+        "title": "E - provider unavailable (simulated outage)",
+        "expected_state": "DONE",
+        "question": "Estimate the relationship between signal_mV and t_s and report R2.",
+        "simulate_provider_failure": True,
+        "expected_behaviour": "A simulated provider outage falls back to the deterministic plan; a labelled offline MOCK report is written without a network call.",
+    },
 }
+
+
+def _unavailable_provider(*args, **kwargs):
+    """Deterministic simulated outage; never makes a network call."""
+    raise RuntimeError("simulated Muse Spark provider outage (no network call)")
+
+
+def _agent_mock_context(data: dict) -> dict:
+    """Computed-only context + stable result IDs from executed agent tools."""
+    evidence: dict[str, dict] = {}
+    fit: dict = {}
+    correlation_payload: dict = {}
+    for entry in data.get("tool_results") or []:
+        if not entry.get("ok"):
+            continue
+        payload = entry.get("result") or {}
+        result_id = f"agent.event.{entry['seq']}"
+        if entry["tool"] == "fit_curve":
+            metrics = payload.get("metrics") or {}
+            fit = {
+                "success": bool(payload.get("success")),
+                "model": payload.get("model"),
+                "label": payload.get("equation") or payload.get("model"),
+                "parameters": payload.get("parameters") or {},
+                "metrics": {"r2": metrics.get("r2"), "rmse": metrics.get("rmse")},
+                "n_observations": payload.get("n_observations"),
+            }
+            evidence[result_id] = {"label": "Computed agent fit", **fit}
+        elif entry["tool"] == "diagnose_fit":
+            diagnosis = payload.get("diagnosis") or {}
+            evidence[result_id] = {
+                "label": "Computed fit diagnostics",
+                "verdict": diagnosis.get("verdict"), "r2": diagnosis.get("r2"),
+                "reasons": diagnosis.get("reasons"),
+            }
+        elif entry["tool"] == "compare_models":
+            evidence[result_id] = {
+                "label": "Computed model comparison",
+                "comparison": payload.get("comparison"),
+            }
+        elif entry["tool"] == "correlation_analysis":
+            correlation_payload = (payload.get("correlation") or {})
+            evidence[result_id] = {"label": "Computed association",
+                                   **correlation_payload}
+    dataset = data.get("dataset") or {}
+    rows = dataset.get("rows")
+    return {
+        "note": "All values were computed by executed agent tools. Do not invent numbers.",
+        "source": {"name": dataset.get("name"), "rows": rows,
+                   "columns": dataset.get("columns") or []},
+        # The agent never deletes source rows; cleaning uses pairwise completeness.
+        "cleaning": {"rows_in": rows, "rows_out": rows},
+        "fit": fit,
+        "correlation": correlation_payload,
+        "research_question": data.get("research_question"),
+        "result_ids": list(evidence),
+        "evidence_index": evidence,
+    }
+
+
+def _write_provider_unavailable_artifacts(destination: Path, data: dict) -> None:
+    """Write honest status + an explicitly labelled deterministic MOCK report."""
+    status = dict(ask_muse.provider_status())
+    status["simulated_outage"] = True
+    status["note"] = ("This case deliberately makes both AI provider seams fail. "
+                      "No live request was attempted; plan_source records the fallback.")
+    (destination / "provider_status.json").write_text(
+        json.dumps(status, indent=2), encoding="utf-8"
+    )
+    context = _agent_mock_context(data)
+    mock = ask_muse.generate_mock_report(context, research_question=context["research_question"])
+    lines = [
+        "# OFFLINE MOCK report — NOT a Muse Spark response, NOT AI", "",
+        mock["disclaimer"], "",
+        f"Generator: `{mock['model']}`. Provider status: `{mock['provider_status']}`.", "",
+        f"Research question: {context['research_question']}", "",
+    ]
+    for section in mock["structured"]["sections"]:
+        lines += [f"## {section['title']}", "", section["content"], ""]
+    for index, claim in enumerate(mock["structured"]["claims"], start=1):
+        lines += [f"## Claim {index} ({claim['evidence_type']})", "", claim["claim"], "",
+                  f"- Evidence: {claim['evidence']}",
+                  f"- Computed result IDs: {', '.join(claim.get('evidence_ids') or [])}",
+                  f"- Limitation: {claim['limitation']}",
+                  f"- Verification: {claim['proposed_verification']}", ""]
+    (destination / "offline_mock_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def run_case(case_id: str, output_dir: Path, *, use_ai: bool = False,
@@ -63,7 +165,14 @@ def run_case(case_id: str, output_dir: Path, *, use_ai: bool = False,
     case = CASES[case_id]
     path = EXAMPLES / case["file"]
     load = read_csv_robust(path, source_name=path.name)
-    config = OrchestratorConfig(use_ai=use_ai, user_confirmed=user_confirmed)
+    simulated_outage = bool(case.get("simulate_provider_failure"))
+    config = OrchestratorConfig(
+        use_ai=bool(use_ai or simulated_outage), user_confirmed=user_confirmed,
+        research_question=case.get("question"),
+    )
+    if simulated_outage:
+        config.plan_provider = _unavailable_provider
+        config.interpretation_provider = _unavailable_provider
     run = AnalysisOrchestrator(config).run(load)
 
     destination = output_dir / case_id
@@ -73,9 +182,14 @@ def run_case(case_id: str, output_dir: Path, *, use_ai: bool = False,
     (destination / "agent_report.md").write_text(run.to_markdown(), encoding="utf-8")
 
     data = run.to_dict()
+    if simulated_outage:
+        _write_provider_unavailable_artifacts(destination, data)
     print(f"\n=== {case['title']} [{case_id}] ===")
     print(f"file: {path.name} | rows: {data['dataset']['rows']} | "
           f"plan source: {data['plan_source']}")
+    print(f"research question ({data['question_source']}): {data['research_question']}")
+    if simulated_outage:
+        print("provider: SIMULATED OUTAGE (no network call) -> deterministic fallback + labelled offline MOCK")
     print(f"expected: {case['expected_behaviour']}")
     print("-" * 108)
     print(f"{'#':>3}  {'ACTOR':<15} {'PHASE':<12} {'TOOL':<22} {'STATUS':<9} DECISION")
@@ -90,6 +204,10 @@ def run_case(case_id: str, output_dir: Path, *, use_ai: bool = False,
     print(f"retries: {json.dumps(data['retries'])}")
     print(f"FINAL STATE: {data['final']['state']}")
     print(f"CONCLUSION: {data['final']['conclusion']}")
+    if data["final"].get("clarification"):
+        print("CLARIFICATION OPTIONS:")
+        for option in data["final"]["clarification"].get("options") or []:
+            print(f"  - {option}")
     print(f"artifacts: {destination}")
     return run
 

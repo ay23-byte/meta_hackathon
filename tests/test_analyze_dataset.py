@@ -148,3 +148,37 @@ def test_ai_can_use_custom_sections_with_a_stub_provider(monkeypatch, tmp_path):
     assert result["ai"]["structured"]["sections"][0]["title"] == titles[0]
     assert calls[0][1] == titles
     assert "fit" in calls[0][0]
+
+
+def test_cli_offline_mock_is_labelled_and_question_is_recorded(monkeypatch, tmp_path):
+    import ask_muse
+
+    def forbidden(**kwargs):
+        raise AssertionError("--ai-mock must not construct a provider client.")
+
+    monkeypatch.setattr(ask_muse, "OpenAI", forbidden)
+    assert analyze_dataset.main([
+        str(SAMPLE), "--x", "current_A", "--y", "voltage_V",
+        "--output-dir", str(tmp_path), "--ai-mock",
+        "--report-profile", "scientific", "--question", "What is the slope?",
+    ]) == 0
+    data = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    ai = data["ai"]
+    assert ai["is_mock"] is True and ai["source"] == "offline_mock"
+    assert ai["structured"]["sections"][0]["title"] == "Research Question"
+    assert "What is the slope?" in json.dumps(ai["structured"], ensure_ascii=False)
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "OFFLINE MOCK report" in report and "NOT AI" in report
+    assert "4.99091" in report  # computed, not invented
+
+
+def test_cli_agent_question_is_written_to_audit(tmp_path):
+    question = "How does voltage_V vary with current_A?"
+    assert analyze_dataset.main([
+        str(SAMPLE), "--x", "current_A", "--y", "voltage_V",
+        "--output-dir", str(tmp_path), "--agent", "--question", question,
+    ]) == 0
+    audit = json.loads((tmp_path / "agent" / "agent_audit.json").read_text(encoding="utf-8"))
+    assert audit["research_question"] == question
+    assert audit["question_source"] == "user"
+    assert audit["final"]["state"] == "DONE"

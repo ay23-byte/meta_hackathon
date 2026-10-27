@@ -7,7 +7,29 @@ validated fallback models, but it cannot change these thresholds.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
+
+DEFAULT_RESEARCH_QUESTION = "How does the selected response Y vary with the selected X?"
+MAX_RESEARCH_QUESTION_CHARS = 300
+
+# A question is only actionable if it names a column or a testable quantity.
+# This is a deliberately conservative, deterministic check; it never guesses
+# what the user meant. Ambiguity always produces a clarification request.
+_QUESTION_TOPICS = frozenset({
+    "relationship", "correlation", "association", "effect", "change", "changes",
+    "vary", "varies", "variation", "trend", "slope", "rate", "fit", "model",
+    "compare", "comparison", "predict", "prediction", "resistance", "calibration",
+    "sensitivity", "uncertainty", "outlier", "outliers", "quality", "linear",
+    "nonlinear", "growth", "decay", "difference", "increase", "decrease",
+    "response", "dependence", "dependent", "significance",
+})
+_VAGUE_PHRASES = (
+    "is it good", "is this good", "what about it", "tell me something",
+    "any insight", "what do you think", "does it matter", "is it significant",
+    "analyze this", "analyse this", "make it better", "is it ok", "is it okay",
+)
 
 PASS = "PASS"
 POOR_FIT = "POOR_FIT"
@@ -162,3 +184,45 @@ def choose_alternative(tried: list[str], fallback_models: list[str], max_attempt
         if model not in tried:
             return model
     return None
+
+
+def normalize_question(question: str | None) -> tuple[str, str]:
+    """Return (question, source). Empty input uses an explicit generic default."""
+    text = " ".join(str(question or "").split())[:MAX_RESEARCH_QUESTION_CHARS]
+    if not text:
+        return DEFAULT_RESEARCH_QUESTION, "default"
+    return text, "user"
+
+
+def clarify_question(question: str, columns=()) -> dict:
+    """Decide whether the research question is too ambiguous to analyse.
+
+    Returns ``{"needed", "reasons", "options"}``. Options are concrete,
+    dataset-specific alternatives the user can select; the agent never invents
+    the intended variable or conclusion.
+    """
+    text = " ".join(str(question or "").split())
+    lowered = text.casefold()
+    words = re.findall(r"[A-Za-z0-9_]+", lowered)
+    column_names = [str(name) for name in (columns or []) if str(name).strip()]
+    names_column = any(name.casefold() in lowered for name in column_names)
+    has_topic = any(word in _QUESTION_TOPICS for word in words)
+    vague = any(phrase in lowered for phrase in _VAGUE_PHRASES)
+    needed = bool(len(text) < 8 or len(words) < 3 or vague
+                  or (not names_column and not has_topic))
+    x_name = column_names[0] if column_names else "the selected X column"
+    y_name = column_names[1] if len(column_names) > 1 else "the selected Y column"
+    options = [
+        f"Estimate how {y_name} varies with {x_name}, and report the fitted equation and R².",
+        f"Compare candidate models for {y_name} as a function of {x_name} and report diagnostics.",
+        "Assess data quality first, then state whether the evidence supports any quantitative conclusion.",
+    ]
+    if not needed:
+        return {"needed": False, "reasons": [], "options": []}
+    reasons = [
+        "The research question does not identify a measurable variable or a testable relationship.",
+        "No analysis tool was executed: proceeding would require guessing the user's intent.",
+    ]
+    if vague:
+        reasons.insert(0, "The question matches a known vague-phrase pattern.")
+    return {"needed": True, "reasons": reasons, "options": options}

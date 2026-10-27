@@ -21,6 +21,7 @@ from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
 from data_io import coerce_numeric
 from fitting_core import MODEL_SPECS, fit_model
+from fitting_core import compare_models as rank_models
 from statistics_core import correlation, covariance, describe_numeric, outlier_diagnostics
 from visualization_core import PLOT_TYPES, build_chart
 
@@ -122,6 +123,8 @@ def _validate_scalar(name: str, value, spec: ParamSpec, ctx: ToolContext):
             return f"parameter '{name}' must be a list of strings"
         if len(value) > MAX_STATS_COLUMNS:
             return f"parameter '{name}' exceeds the column limit"
+        if spec.choices and any(item not in spec.choices for item in value):
+            return f"parameter '{name}' must contain only {list(spec.choices)}"
         if spec.column and ctx.working is not None:
             for item in value:
                 if item not in ctx.working.columns:
@@ -334,6 +337,82 @@ def _render_plot(ctx: ToolContext, params: dict) -> dict:
             "warnings": spec.warnings, "notes": spec.notes}
 
 
+def _compare_models(ctx: ToolContext, params: dict) -> dict:
+    """Fit a small, validated set of models and rank them by computed metrics."""
+    if ctx.working is None:
+        return {"error": "inspect_dataset must run first"}
+    x, y = params["x"], params["y"]
+    xv = coerce_numeric(ctx.working[x]).values
+    yv = coerce_numeric(ctx.working[y]).values
+    mask = np.isfinite(xv) & np.isfinite(yv)
+    models = list(dict.fromkeys(params.get("models") or ["linear", "polynomial"]))[:3]
+    fits = [
+        fit_model(model, xv[mask], yv[mask], None,
+                  degree=params.get("degree") or 2, x_label=x, y_label=y)
+        for model in models
+    ]
+    return {
+        "comparison": rank_models(fits),
+        "n_observations": int(mask.sum()),
+        "models_requested": models,
+        "ranking": "AIC when available, otherwise adjusted R²; computed locally.",
+        "note": "Model comparison is descriptive; it is not proof of a physical mechanism.",
+    }
+
+
+def _evidence_summary(ctx: ToolContext, params: dict) -> dict:
+    """Summarise only fits actually computed during this run."""
+    entries = []
+    for ref, fit in ctx.fits.items():
+        metrics = dict(getattr(fit, "metrics", {}) or {})
+        entries.append({
+            "result_id": f"fit.{ref}",
+            "fit_ref": ref,
+            "model": getattr(fit, "model", None),
+            "success": bool(getattr(fit, "success", False)),
+            "n_observations": getattr(fit, "n_observations", 0),
+            "r2": metrics.get("r2"),
+            "rmse": metrics.get("rmse"),
+        })
+    return {
+        "evidence": entries,
+        "n_fits": len(entries),
+        "n_valid_pairs": len(ctx.x_values) if ctx.x_values is not None else 0,
+        "note": "IDs reference executed fit events; no values were invented or imputed.",
+    }
+
+
+def _time_series_summary(ctx: ToolContext, params: dict) -> dict:
+    """Descriptive lag summary for an ordered numeric series; no forecasting."""
+    if ctx.working is None:
+        return {"error": "inspect_dataset must run first"}
+    time_values = coerce_numeric(ctx.working[params["time"]]).values
+    values = coerce_numeric(ctx.working[params["value"]]).values
+    mask = np.isfinite(values)
+    time_finite = np.isfinite(time_values)
+    if time_finite.all() and np.all(np.diff(time_values) > 0):
+        order = np.argsort(time_values)
+        ordering = "strictly increasing numeric time column"
+    else:
+        order = np.arange(len(values))
+        ordering = "original row order (time column is not strictly increasing numeric)"
+        mask &= time_finite
+    series = values[order][mask[order]]
+    if series.size < 3:
+        return {"error": "at least three finite ordered values are required"}
+    steps = np.diff(series)
+    lags = {}
+    for lag in range(1, min(int(params.get("max_lag") or 1), series.size - 2) + 1):
+        lags[str(lag)] = correlation(series[:-lag], series[lag:], method="pearson")
+    return {
+        "n_points": int(series.size), "ordering": ordering,
+        "mean_step": float(np.mean(steps)),
+        "std_step": float(np.std(steps, ddof=1)) if steps.size > 1 else None,
+        "lag_correlations": lags,
+        "note": "Descriptive lag associations only; no forecasting, seasonality claim or causal inference.",
+    }
+
+
 def _request_confirmation(ctx: ToolContext, params: dict) -> dict:
     return {"confirmed": True, "action": params["action"],
             "note": "User confirmation was supplied; no destructive operation is performed by this tool."}
@@ -368,6 +447,18 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "diagnose_fit": ToolSpec("diagnose_fit", _diagnose_fit,
                              {"fit_ref": ParamSpec("str")},
                              description="Deterministic fit-quality classification."),
+    "compare_models": ToolSpec("compare_models", _compare_models, {
+        "x": ParamSpec("str", column=True), "y": ParamSpec("str", column=True),
+        "models": ParamSpec("list[str]", required=False,
+                            choices=tuple(MODEL_SPECS)),
+        "degree": ParamSpec("int", required=False, minimum=1, maximum=MAX_DEGREE),
+    }, description="Fit up to three allowlisted models and rank them by computed AIC/adjusted R²."),
+    "evidence_summary": ToolSpec("evidence_summary", _evidence_summary, {},
+                                 description="List computed fit result IDs and metrics from this run."),
+    "time_series_summary": ToolSpec("time_series_summary", _time_series_summary, {
+        "time": ParamSpec("str", column=True), "value": ParamSpec("str", column=True),
+        "max_lag": ParamSpec("int", required=False, minimum=1, maximum=5),
+    }, description="Descriptive step statistics and lag correlations for an ordered numeric series."),
     "render_plot": ToolSpec("render_plot", _render_plot, {
         "plot_type": ParamSpec("str", choices=tuple(PLOT_TYPES)),
         "x": ParamSpec("str", column=True), "y": ParamSpec("str", column=True),

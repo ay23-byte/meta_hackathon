@@ -6,12 +6,16 @@ length, so confirm in the participant portal). A truthful, executable demo
 using the bundled sample dataset.
 
 Never present a mock or saved AI report as a live Muse Spark result. If the
-API is unavailable, use the fallback path below and say so on camera.
+API is unavailable, you may show the **explicitly labelled OFFLINE MOCK** from
+the separate "Preview deterministic OFFLINE MOCK report (no API key, NOT AI)"
+button or `--ai-mock`, while saying clearly that it is a local template and
+NOT Muse Spark output. The primary app for the recording is `general_app.py`.
 
 ## Pre-recording checklist
 
 - [ ] `python -m pytest -m "not live" -q` passes; `ruff check .` passes.
-- [ ] `python -m streamlit run app.py` opens with the bundled sample.
+- [ ] `python -m streamlit run general_app.py` opens with the bundled sample
+      (the primary app); `app.py` remains available as the legacy workflow.
 - [ ] Either a working `BASETEN_API_KEY` in a local `.env`, **or** a plan to
       use the fallback path (no key).
 - [ ] Hide your terminal, `.env`, browser password manager, and any key
@@ -77,14 +81,18 @@ Press "Generate evidence-grounded interpretation". While it loads, explain:
 Show the eight sections and the claims table. Say: "These statements are
 not independently verified; check them against the numerical record."
 
-**Fallback (no key / provider error):** skip the generation and instead
-show the sidebar status and a failed/omitted attempt. Say on camera:
+**Fallback (no key / provider error):** skip live generation. Show the sidebar
+"Provider status" expander (`live_verified=false`), then press the separate
+"Preview deterministic OFFLINE MOCK report (no API key, NOT AI)" button. Read
+the disclaimer aloud. Say on camera:
 
 > "Muse Spark is optional. Missing credentials or provider access does not
-> affect calculation, plots, or exports. The offline tests verify the
-> request and validation contract; the live round-trip needs a key."
+> affect calculation, plots, or exports. This is an explicitly labelled
+> deterministic MOCK — it is not an AI response. The offline tests verify our
+> request and validation contract; the live round-trip still needs a key."
 
-Never show a mocked report as a live result.
+Never present the mock as live AI. In the export, point to the distinct
+"OFFLINE MOCK report (deterministic template, NOT AI)" heading.
 
 ### 2:10–2:30 — Export reproducibility
 
@@ -98,9 +106,9 @@ versions, and the AI-used flag.
 > "Reproducible calculations first, optional evidence-grounded AI second,
 > with uncertainty and limitations shown explicitly."
 
-End on the residual plot or the exported JSON. Optionally flash the test
-summary: 229 passed, 2 skipped, 91% coverage of the new deterministic
-modules — and state that the two skips are live provider tests.
+End on the residual plot or the exported JSON. Optionally flash the actual
+test summary: 348 passed, 2 skipped — and state that the two skips are live
+provider tests that could not run without a key.
 
 ## Alternative: general-platform demo (added 27 Oct 2026)
 
@@ -130,7 +138,8 @@ Never present the synthetic example data as real measurements.
 
 ## Agent demo (add ~45 s)
 
-Run `python run_agent_demo.py --case all --strict` in a terminal beside the app.
+Run `python run_agent_demo.py --case all --strict --output-dir outputs/agent_demo`
+in a terminal beside the app (seven cases: A, B, B', C, C', D, E).
 Point at the console table: rows labelled **AI DECISION** are plan/selection
 steps; **DETERMINISTIC TOOL** rows are computed numbers. Then show:
 
@@ -140,7 +149,11 @@ steps; **DETERMINISTIC TOOL** rows are computed numbers. Then show:
 - Case B': `INSUFFICIENT_EVIDENCE` with an explicit reason - no invented
   conclusion.
 - Case C: missing/invalid/inf detected, all 9 rows retained, 6 pairs used.
-- Case C': `NEEDS_CLARIFICATION` before any fit.
+- Case C': `NEEDS_CLARIFICATION` before any fit (ambiguous schema).
+- Case D: `NEEDS_CLARIFICATION` before any tool (ambiguous research question
+  "Is it good?"), with three concrete options in the audit report.
+- Case E: simulated provider outage; `plan_source: deterministic_fallback`,
+  `provider_status.json`, and `offline_mock_report.md` labelled NOT AI.
 
 Open `outputs/agent_demo/b/agent_report.md` and show the plan validation block,
 the retry entry, the evidence refs and the Mermaid timeline. In the Streamlit
@@ -162,3 +175,28 @@ configured and the log shows `plan_source: muse_spark`.
 
 See `docs/HACKATHON_RULES.md` for verified requirements and
 `docs/HACKATHON_CHECKLIST.md` for the full submission checklist.
+
+---
+
+## Recommended A-E demo recording (master-prompt phase, ~3 minutes)
+
+Use only actual functionality; no fabricated provider response.
+
+| Time | Action | Exact narration |
+| --- | --- | --- |
+| 0:00-0:25 | Launch `general_app.py`, show sidebar provider status | "Calculations are local; live AI is optional and not verified by a key alone." |
+| 0:25-0:55 | Steps A-C: sample data, cleaning preview, change X/Y and the Scientific question | "The user controls roles, units, model and question; nothing is inferred from the filename." |
+| 0:55-1:25 | Steps D-E: residual plot, fit metrics, model comparison | "Slope 4.99091, R² 0.999803 are computed locally, not AI." |
+| 1:25-1:55 | Step F: if a key works, generate the scientific live report; otherwise show the labelled OFFLINE MOCK | "Live report = AI hypotheses; mock = deterministic template, NOT AI. Both are validated against computed result IDs." |
+| 1:55-2:20 | Step G + terminal `run_agent_demo.py --case all --strict` | "Seven reproducible cases; D asks for clarification, E survives a simulated provider outage." |
+| 2:20-2:45 | Open `agent_report.md`, `offline_mock_report.md`, `report.md`, `results.json` | "Every decision, retry and computed value has an audit trail; AI text is separate." |
+| 2:45-3:00 | Show actual `pytest -q` result | "348 passed, 2 skipped; the skips require a live key." |
+
+PowerShell equivalents for the terminal shots:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run general_app.py
+.\.venv\Scripts\python.exe -B run_agent_demo.py --case all --strict --output-dir outputs\agent_demo
+.\.venv\Scripts\python.exe -B analyze_dataset.py data\sample_voltage_current.csv --x current_A --y voltage_V --output-dir outputs\mock --ai-mock --report-profile scientific --question "What is the slope?"
+.\.venv\Scripts\python.exe -m pytest -q
+```

@@ -44,7 +44,11 @@ class AgentEvent:
 class AgentRun:
     """One complete, bounded agent run."""
 
-    def __init__(self, *, dataset: dict, limits: dict | None = None):
+    def __init__(self, *, dataset: dict, limits: dict | None = None,
+                 research_question: str | None = None,
+                 question_source: str = "default"):
+        self.research_question = research_question
+        self.question_source = question_source
         self.run_id = "agent-" + hashlib.sha256(
             f"{time.time_ns()}-{dataset.get('name', '')}".encode()
         ).hexdigest()[:12]
@@ -101,10 +105,12 @@ class AgentRun:
     def finalize(self, *, state: str, conclusion: str,
                  evidence_refs: list[int] | None = None,
                  reasons: list[str] | None = None,
-                 ai_report: dict | None = None) -> None:
+                 ai_report: dict | None = None,
+                 clarification: dict | None = None) -> None:
         self.final = {
             "state": state,
             "conclusion": conclusion,
+            "clarification": clarification,
             "evidence_refs": evidence_refs or [],
             "insufficient_evidence": state != "DONE",
             "reasons": reasons or [],
@@ -125,6 +131,8 @@ class AgentRun:
             "started_at": self.started_at,
             "plan_source": self.plan_source,
             "plan_hash": self.plan_hash,
+            "research_question": self.research_question,
+            "question_source": self.question_source,
             "dataset": self.dataset,
             "limits": self.limits,
             "quality_summary": self.quality_summary,
@@ -172,6 +180,7 @@ class AgentRun:
             f"- Started (UTC): {data['started_at']}",
             f"- Plan source: **{data['plan_source']}**",
             f"- Plan hash: `{data['plan_hash']}`",
+            f"- Research question ({data['question_source']}): {data['research_question']}",
             f"- Dataset: `{data['dataset'].get('name')}` "
             f"({data['dataset'].get('rows')} rows, sha256 `{str(data['dataset'].get('sha256'))[:16]}...`)",
             f"- Limits: {json.dumps(data['limits'])}",
@@ -204,6 +213,15 @@ class AgentRun:
             "",
             final.get("conclusion", ""), "",
         ]
+        clarification = final.get("clarification")
+        if clarification:
+            lines += ["### Clarification required", ""]
+            for reason in clarification.get("reasons") or []:
+                lines.append(f"- {reason}")
+            lines.append("")
+            for option in clarification.get("options") or []:
+                lines.append(f"- [ ] {option}")
+            lines.append("")
         if final.get("ai_report") and not final["ai_report"].get("rejected"):
             lines += ["### AI-generated sections (unverified hypotheses)", ""]
             for section in final["ai_report"]["structured"]["sections"]:
@@ -215,6 +233,8 @@ class AgentRun:
         """Only executed tool outputs and decisions; no raw rows, no prior AI text."""
         return {
             "dataset": self.dataset,
+            "research_question": self.research_question,
+            "question_source": self.question_source,
             "quality_summary": self.quality_summary,
             "tool_results": self.tool_results,
             "decisions": self.decisions,
