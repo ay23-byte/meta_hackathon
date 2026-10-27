@@ -34,6 +34,24 @@ REQUIRED_TITLES = (
     "Conclusion",
 )
 
+# Registry of every section the report may contain. The eight titles in
+# REQUIRED_TITLES remain the default set for full backward compatibility;
+# callers may opt into any subset/superset of the ten registered titles.
+SECTION_REGISTRY = {
+    "Executive Summary": "One-paragraph summary of what was computed, grounded only in the supplied results.",
+    "Observed Pattern": "Describe the pattern actually visible in the data and the fit diagnostics.",
+    "Model and Assumptions": "State the chosen model and every assumption the user selected or the fit requires.",
+    "Quantitative Results": "Quote computed coefficients, uncertainties and fit metrics with their units.",
+    "Scientific Interpretation": "Interpret the results without claiming causation or unverified physical laws.",
+    "Uncertainty and Limitations": "Distinguish statistical uncertainty, measurement uncertainty and model limitations.",
+    "Proposed Verification": "Suggest concrete, testable follow-up measurements or checks.",
+    "Conclusion": "A cautious conclusion that follows from the computed evidence.",
+    "Data Quality and Cleaning": "Explain missing, invalid, non-finite and excluded observations and their likely effect.",
+    "Alternative Explanations": "Offer competing mechanisms or confounders consistent with the same data.",
+}
+MAX_SECTIONS = len(SECTION_REGISTRY)
+DEFAULT_SECTION_TITLES = REQUIRED_TITLES
+
 # Hard limits. Everything crossing the provider boundary is untrusted input.
 MAX_CLAIMS = 2
 MAX_SECTION_WORDS = 25
@@ -56,9 +74,41 @@ _CLAIM_FIELDS = (
 )
 
 
-def build_prompt(analysis_context):
+def resolve_section_titles(section_titles=None):
+    """Validate and canonicalize requested report section titles.
+
+    ``None`` (the default) returns the legacy eight-title set. Requests must
+    be a sequence of registered titles with no duplicates; unknown or
+    unexpected names are rejected before anything reaches the provider.
+    """
+    if section_titles is None:
+        return REQUIRED_TITLES
+    if isinstance(section_titles, str) or not isinstance(section_titles, (list, tuple)):
+        raise ValueError("Report sections must be a list of registered section titles.")
+    if not 1 <= len(section_titles) <= MAX_SECTIONS:
+        raise ValueError(f"Choose between 1 and {MAX_SECTIONS} report sections.")
+    canonical = {title.casefold(): title for title in SECTION_REGISTRY}
+    seen: set[str] = set()
+    resolved: list[str] = []
+    for title in section_titles:
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Report section titles must be non-empty strings.")
+        key = title.strip().casefold()
+        if key not in canonical:
+            raise ValueError(f"Unexpected report section: {title!r}.")
+        if key in seen:
+            raise ValueError(f"Duplicate report section: {title!r}.")
+        seen.add(key)
+        resolved.append(canonical[key])
+    return tuple(resolved)
+
+
+def build_prompt(analysis_context, section_titles=None):
     """Create a constrained, evidence-grounded scientific report prompt."""
-    sections = "\n".join(f"- {title}" for title in REQUIRED_TITLES)
+    titles = resolve_section_titles(section_titles)
+    sections = "\n".join(
+        f"- {title}: {SECTION_REGISTRY[title]}" for title in titles
+    )
     try:
         context = json.dumps(
             analysis_context,
@@ -104,7 +154,7 @@ and no additional top-level keys:
   ]
 }}
 
-Include each of these eight sections exactly once:
+Include each of these {len(titles)} sections exactly once, and no others:
 {sections}
 
 Limit each section's content to at most {MAX_SECTION_WORDS} words.
@@ -121,13 +171,15 @@ Experiment context:
     return prompt
 
 
-def validate_report(raw_report):
+def validate_report(raw_report, section_titles=None):
     """Return a sanitized, schema-valid report dict, otherwise ``None``.
 
     This is the single source of truth for the report schema. The dashboard,
-    exports and tests all consume its output. Extra keys supplied by the
-    provider are discarded so untrusted AI output cannot smuggle arbitrary
-    fields into the UI, session state or downloaded records.
+    exports and tests all consume its output. ``section_titles=None`` keeps
+    the original eight-title default; any other request must be a validated
+    subset of SECTION_REGISTRY. Extra keys supplied by the provider are
+    discarded so untrusted AI output cannot smuggle arbitrary fields into
+    the UI, session state or downloaded records.
     """
     if isinstance(raw_report, dict):
         report = raw_report
@@ -155,15 +207,20 @@ def validate_report(raw_report):
     if not isinstance(report, dict):
         return None
 
+    try:
+        titles = resolve_section_titles(section_titles)
+    except ValueError:
+        return None
+
     sections = report.get("sections")
     claims = report.get("claims")
 
     if not isinstance(sections, list) or not isinstance(claims, list):
         return None
-    if len(sections) != len(REQUIRED_TITLES) or len(claims) > MAX_CLAIMS:
+    if len(sections) != len(titles) or len(claims) > MAX_CLAIMS:
         return None
 
-    canonical = {title.casefold(): title for title in REQUIRED_TITLES}
+    canonical = {title.casefold(): title for title in titles}
     seen = set()
     clean_sections = []
 
@@ -292,22 +349,23 @@ def _network_error(exc):
     )
 
 
-def generate_interpretation(analysis_context):
+def generate_interpretation(analysis_context, section_titles=None):
     """Request a Muse Spark report and return a validated wrapper.
 
     Returns ``{"model": str, "structured": {"sections": [...], "claims": [...]}}``.
     Raises ``ValueError`` for an unusable local context and ``RuntimeError``
     for provider failures; neither ever contains the API key.
     """
+    # Validate the local report configuration first: a bad section request is
+    # a caller error, not a missing-credential or provider failure.
+    titles = resolve_section_titles(section_titles)
+    prompt = build_prompt(analysis_context, titles)
+
     api_key = os.getenv("BASETEN_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
             "BASETEN_API_KEY is missing. Add it to the project's local .env file."
         )
-
-    # Built outside the provider try/except so a local context problem is
-    # never misreported as a network or credentials failure.
-    prompt = build_prompt(analysis_context)
 
     try:
         client = OpenAI(
@@ -375,7 +433,7 @@ def generate_interpretation(analysis_context):
             "Increase the completion-token budget and try again."
         )
 
-    structured = validate_report(content)
+    structured = validate_report(content, titles)
     if structured is None:
         raise RuntimeError(
             "Muse Spark responded, but its report did not match the required "

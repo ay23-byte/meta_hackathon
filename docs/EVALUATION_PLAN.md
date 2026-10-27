@@ -62,7 +62,31 @@ nothing is extrapolated into a user study or a performance benchmark.
   selected variables, model equation, parameters, residual review,
   limitations, reproducibility). Record task completion and errors from
   observed sessions only.
-- With domain data: extend to weighted fits and calibrated uncertainty —
-  only after the measurement model and instrument uncertainty are known.
+- With domain data: validate weighted fits and calibrated uncertainty against
+  a known measurement model before claiming calibrated errors. The general
+  engine now supports weighted fitting, but the *meaning* of a supplied
+  uncertainty column (SD vs SEM vs accuracy) still requires human input.
 - Independent review of AI claims against the numerical record is still a
   human step; do not claim automated verification.
+
+## General platform - measured gates (27 Oct 2026)
+
+These results were measured after the Phase 0-7 implementation. The original
+sample-workflow gates above remain valid for `app.py`.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Offline tests | `python -m pytest -q` | 229 passed, 2 skipped |
+| New-module coverage | `pytest -m "not live" -q --cov=data_io ... --cov=analyze_dataset` | 91% statements (1,338/1,463); per module 87-98% |
+| Lint | `ruff check .` | clean |
+| Compile | `python -m compileall -q *.py` | clean |
+| UI smoke | `streamlit run general_app.py` on `0.0.0.0:8503` | `/` and `/_stcore/health` HTTP 200 |
+| AppTest for both apps | `pytest tests/test_general_app.py tests/test_streamlit_app.py -q` | pass, no exceptions |
+| Live provider | `python -m pytest -m live -v` | **not run** - no `BASETEN_API_KEY` |
+
+Verified numerically on synthetic data with known parameters: linear
+slope/intercept (including `x ~ 1e9`), polynomial coefficients in original
+units, exponential rate, logarithmic and power parameters, weighted-fit
+improvement, exponential doubling time, Pearson/Spearman correlations,
+Student-t CI, and IQR flags. See `tests/test_fitting_core.py` and
+`tests/test_statistics_core.py`.

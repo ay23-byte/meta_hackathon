@@ -99,8 +99,34 @@ versions, and the AI-used flag.
 > with uncertainty and limitations shown explicitly."
 
 End on the residual plot or the exported JSON. Optionally flash the test
-summary: 112 passed, 2 skipped, 98% coverage — and state that the two
-skips are live provider tests.
+summary: 229 passed, 2 skipped, 91% coverage of the new deterministic
+modules — and state that the two skips are live provider tests.
+
+## Alternative: general-platform demo (added 27 Oct 2026)
+
+Run `python -m streamlit run general_app.py`. A 3-minute sequence that shows
+the platform is not limited to the voltage-current sample:
+
+1. **A - Upload**: start with the bundled sample, then upload
+   `data/examples/synthetic_calibration.csv` (different column names, units,
+   an uncertainty column and a group column).
+2. **B - Validate / Clean**: show the inferred column kinds, the missing /
+   invalid / non-finite counts and the cleaning preview; point out that
+   nothing becomes zero and invalid rows stay in the cleaned CSV.
+3. **C - Configure**: change X/Y, select the uncertainty column, switch the
+   model to polynomial and then back to linear, and open the domain
+   assumptions expander. Show that `generic` names no physical constant.
+4. **D - Explore**: switch the primary chart between scatter, box,
+   correlation heatmap and residuals; read one chart warning aloud.
+5. **E - Fit**: show the equation, parameter errors, R², AIC comparison and
+   an extrapolated prediction flagged as such.
+6. **F - Interpret**: with a key configured, generate a report and state
+   explicitly that it is AI-generated and unverified; without a key, show the
+   graceful fallback.
+7. **G - Export**: download the ZIP and open `report.md`, `results.json`
+   and one `plots/*.html` file.
+
+Never present the synthetic example data as real measurements.
 
 ## After recording
 

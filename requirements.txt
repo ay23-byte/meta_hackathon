@@ -3,11 +3,17 @@
 # Lower bounds were checked against the published wheels:
 #   - streamlit 1.50.0 is the earliest verified to expose width="stretch"
 #     on st.dataframe;
-#   - openai 1.50.0 already supports max_completion_tokens and response_format.
+#   - openai 1.50.0 already supports max_completion_tokens and response_format;
+#   - scipy 1.12 ships manylinux2014_x86_64 and win_amd64 wheels for cp311/cp312,
+#     so no compiler is needed on the Linux/Windows CI matrix;
+#   - altair 5.2 supports the mark_boxplot/mark_errorbar/transform_density
+#     APIs used by visualization_core.py.
 streamlit>=1.50,<2
 numpy>=1.26,<3
+scipy>=1.12,<2
 pandas>=2.1,<4
 matplotlib>=3.8,<4
+altair>=5.2,<7
 python-dotenv>=1.0,<2
 openai>=1.50,<4
 pytest>=8.0,<10

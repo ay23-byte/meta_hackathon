@@ -1,5 +1,38 @@
 # Scientific validation
 
+## General engine definitions (added 27 Oct 2026)
+
+The general platform (`statistics_core.py`, `fitting_core.py`) uses these
+definitions. They were verified against synthetic data with known parameters.
+
+- Sample variance/SD use `ddof=1`; population values use `ddof=0`.
+- The 95% CI for the mean is a two-sided Student-t interval with `n-1`
+  degrees of freedom. It assumes independent, approximately normal
+  observations and is **not** an instrument-accuracy interval.
+- Pearson and Spearman coefficients are computed on pairwise-complete finite
+  observations; a constant column makes correlation undefined (reported as
+  `null` with a reason). p-values come from SciPy and assume independence.
+- IQR fences `Q1 - 1.5*IQR`, `Q3 + 1.5*IQR` only *flag* candidate outliers.
+- Linear fitting solves weighted centred normal equations in
+  `fitting_core.fit_linear`; polynomial fitting solves a scaled Vandermonde
+  system and composes coefficients back into the original X units.
+- Nonlinear models use `scipy.optimize.curve_fit` with `sigma = 1/sqrt(w)`
+  when inverse-variance weights are supplied. Non-convergence returns a
+  structured reason, never a partial result.
+- `R² = 1 - SSres/SStot` is `null` when `SStot = 0`; adjusted R², reduced
+  chi² and AIC require a positive residual degree of freedom.
+- AIC comparison is only meaningful for fits on the same observations with
+  the same weighting. Model suggestions are linearised-correlation
+  heuristics, not model selection.
+
+Tests in `tests/test_statistics_core.py` and `tests/test_fitting_core.py`
+assert exact recovery on synthetic data (linear slope/intercept including
+`x ~ 1e9`, polynomial coefficients, exponential rate, log and power
+parameters), weighted-fit behaviour, structured failures and extrapolation
+flags.
+
+## Original sample workflow
+
 ## Mathematical definitions
 
 For paired retained observations `(Iᵢ, Vᵢ)`, LabLens fits
