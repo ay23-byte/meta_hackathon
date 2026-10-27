@@ -109,3 +109,55 @@ provider responses, truncated or empty output, missing API keys, and
 provider/network failures all receive user-facing feedback. Local analysis
 and exports never depend on API availability. Errors are bounded,
 secret-free, and never include raw provider exception text.
+
+---
+
+## Master-prompt architecture update (27 Oct 2026)
+
+The legacy data flow above is preserved. The general platform now has these
+additional boundaries:
+
+```text
+result_schema.evidence_index(result)  -> bounded ID -> computed-values map
+result_schema.ai_context(result, research_question)
+    -> { ..., research_question, result_ids, evidence_index }
+ask_muse.build_prompt(..., profile=legacy|scientific)
+    -> strict JSON schema; when result_ids exist, every claim needs evidence_ids
+ask_muse.generate_interpretation(...)
+    -> live-provider wrapper ONLY; bounded 408/429/5xx retries; never a mock
+ask_muse.generate_mock_report(...)
+    -> offline_mock wrapper; deterministic templates; strict validation
+result_schema.markdown_report / export_bundle
+    -> separate heading and disclaimer for AI vs OFFLINE MOCK
+```
+
+`ask_muse.REPORT_PROFILES` owns two independent registries. `legacy` keeps the
+original eight titles and ten-title registry for backward compatibility;
+`scientific` adds the research-question/method/fit/next-step report. Both use
+one `validate_report()` implementation. `allowed_evidence_ids` makes the schema
+stricter when computed IDs are supplied: each claim must carry 1-4 IDs from
+that set, with no duplicates, unexpected characters or invented values. Extra
+provider keys are always dropped.
+
+`provider_status()` performs **no network call**. It reports whether a key is
+configured, whether a local `.env` exists, and that `live_call_attempted` and
+`live_verified` are false. The UI shows it in the sidebar and step F. Live
+requests use one bounded conservative-shape fallback on HTTP 400 and at most
+`MAX_TRANSIENT_RETRIES` additional attempts for 408/429/5xx or transport
+errors; 4xx configuration errors are never retried. The SDK's own
+`max_retries=1` remains, so the total request count is finite.
+
+The offline mock is a separate code path: `MOCK_MODEL_ID =
+"offline-deterministic-mock"`, `source="offline_mock"`, `is_mock=True`, and a
+disclaimer beginning "OFFLINE MOCK REPORT ... NOT AI". It reads only computed
+context values and passes the same strict validator. `report.md`, `results.json`
+and the UI label it as a mock; it can never be mistaken for a live response.
+
+The bounded agent now starts at a **question gate** before `inspect_dataset`.
+`normalize_question()` records an explicit default when the user supplies none;
+`clarify_question()` stops with `NEEDS_CLARIFICATION` and three dataset-specific
+options when the question is vague. The question is included in the Muse plan
+prompt, the AI interpretation digest, and the JSON/Markdown audit trail. The
+tool allowlist has 13 entries (see `docs/TOOL_REGISTRY.md`), including model
+comparison, evidence summary and descriptive time-series summary. No
+model-generated source code is executed.

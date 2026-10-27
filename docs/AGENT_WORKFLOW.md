@@ -46,9 +46,11 @@ flowchart TD
 
 ## Tool registry
 
-See `docs/TOOL_REGISTRY.md`. Ten tools, all thin wrappers over existing pure
-helpers in `data_io.py`, `column_inference.py`, `cleaning.py`,
-`statistics_core.py`, `fitting_core.py` and `visualization_core.py`.
+See `docs/TOOL_REGISTRY.md`. Thirteen tools (ten in the original release plus
+`compare_models`, `evidence_summary` and `time_series_summary`), all thin
+wrappers over existing pure helpers in `data_io.py`, `column_inference.py`,
+`cleaning.py`, `statistics_core.py`, `fitting_core.py` and
+`visualization_core.py`.
 
 Dispatch is `TOOL_REGISTRY[name].fn(ctx, validated_params)`. There is no
 `eval`, `exec`, dynamic import, subprocess call, or model-supplied path. A
@@ -59,8 +61,8 @@ fences.
 
 ## Plan contract
 
-Muse Spark receives **only** a data-quality summary plus `registry_manifest()`
-(no raw rows). It returns:
+Muse Spark receives **only** a data-quality summary, the bounded research
+question and `registry_manifest()` (no raw rows). It returns:
 
 ```json
 {
@@ -210,3 +212,36 @@ for the wrong reason. The shipped example is now honest UTF-8, and all
 encoding-fallback assertions generate cp1252/latin-1 bytes in memory at test
 time (see `tests/test_encoding_fallback.py`). No tracked file now depends on
 non-UTF-8 bytes.
+
+---
+
+## Master-prompt agent update (27 Oct 2026)
+
+The baseline workflow above remains valid; these are the deltas.
+
+- **Step 0, question gate (before any tool).** `OrchestratorConfig.research_question`
+  is normalized and logged as `phase="question", actor="user"`. If
+  `clarify_question()` finds the question vague (e.g. "Is it good?"), the run
+  finalizes as `NEEDS_CLARIFICATION` with three concrete, dataset-specific
+  options and **zero** tool calls. The question and `question_source`
+  (`user` or `default`) are exported in `agent_audit.json` and
+  `agent_report.md`, and included in `digest_for_ai()` and the plan prompt.
+- **13 allowlisted tools.** Added `compare_models` (rank up to three fitted
+  models by computed AIC/adjusted R²), `evidence_summary` (list computed fit
+  result IDs) and `time_series_summary` (descriptive step statistics and lag
+  correlations, no forecasting). All keep the same declarative parameter
+  validation, 5 s tool timeout and JSON-safe audit logging. The default
+  offline plan now executes 8 steps, still within `MAX_STEPS=8`.
+- **Seven reproducible cases.** `run_agent_demo.py --case all --strict` now
+  runs A, B, B', C, C', **D** (ambiguous research question) and **E**
+  (simulated provider outage). Case E forces both AI provider seams to fail,
+  records the deterministic fallback in the audit log, and writes
+  `provider_status.json` plus `offline_mock_report.md` — both explicitly
+  labelled as a simulated outage and a deterministic MOCK, never live AI.
+- **Honest stopping.** A rejected or unavailable AI interpretation is logged
+  with actor `ai`, status `rejected`/`unavailable`; the deterministic
+  conclusion is retained. No mock is substituted into the live provider path.
+
+Verification on this branch: `pytest -q` → 348 passed, 2 skipped;
+`run_agent_demo.py --case all --strict` → 7/7 expected states. Live
+Muse-proposed planning remains unverified without `BASETEN_API_KEY`.

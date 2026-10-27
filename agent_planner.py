@@ -44,11 +44,14 @@ class PlanValidation:
                 "reasons": self.reasons, "rejected_steps": self.rejected_steps}
 
 
-def build_plan_prompt(quality: dict, manifest: list[dict] | None = None) -> str:
-    """Prompt contains only schema facts and the tool allowlist, never raw rows."""
+def build_plan_prompt(quality: dict, manifest: list[dict] | None = None,
+                      research_question: str | None = None) -> str:
+    """Prompt contains schema facts, the user's question and the tool allowlist."""
     manifest = manifest if manifest is not None else registry_manifest()
-    context = json.dumps({"data_quality": quality, "available_tools": manifest},
-                         ensure_ascii=False, allow_nan=False, default=str)
+    context = json.dumps({
+        "research_question": str(research_question or "")[:MAX_TEXT_FIELD],
+        "data_quality": quality, "available_tools": manifest,
+    }, ensure_ascii=False, allow_nan=False, default=str)
     if len(context) > MAX_PLAN_CHARS:
         raise ValueError("The planning context exceeds its size limit.")
     return f"""
@@ -77,6 +80,8 @@ Rules:
 - `fallback_models` has at most {MAX_FALLBACK_MODELS} entries drawn from the
   model list above. Use "halt_and_explain" when no alternative is justified.
 - Never state a numerical result: all numbers come from executing the tools.
+- Tailor the steps to the supplied research question; ask for clarification
+  in `stop_condition` if the question cannot be answered with these tools.
 - Do not include code, imports, file paths, shell commands, or private names.
 
 Dataset schema and tool allowlist:
@@ -100,12 +105,13 @@ def _extract_json(text: str) -> dict:
     return parsed
 
 
-def request_agent_plan(quality: dict, manifest: list[dict] | None = None) -> dict:
+def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
+                       research_question: str | None = None) -> dict:
     """Ask Muse Spark for a plan. Raises PlannerUnavailable on any failure."""
     api_key = os.getenv("BASETEN_API_KEY", "").strip()
     if not api_key:
         raise PlannerUnavailable("BASETEN_API_KEY is not configured")
-    prompt = build_plan_prompt(quality, manifest)
+    prompt = build_plan_prompt(quality, manifest, research_question)
     if len(prompt) > ask_muse.MAX_PROMPT_CHARS:
         raise PlannerUnavailable("planning prompt exceeds the size limit")
     try:
@@ -259,6 +265,11 @@ def deterministic_plan(quality: dict) -> dict:
          "rationale": "Start with the simplest justified model."},
         {"tool": "diagnose_fit", "params": {"fit_ref": "fit_1"},
          "rationale": "Check fit quality before drawing a conclusion."},
+        {"tool": "compare_models",
+         "params": {"x": x, "y": y, "models": ["linear", "polynomial"]},
+         "rationale": "Compare computed fit metrics without assuming the first model is best."},
+        {"tool": "evidence_summary", "params": {},
+         "rationale": "Record result IDs for evidence-linked claims in the final report."},
     ]
     return {
         "dataset_understanding": "Automatically generated offline plan: describe, plot, fit, diagnose.",
@@ -309,6 +320,7 @@ def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
     context = {
         "note": "Use only these executed tool outputs. Never invent numbers.",
         "dataset": audit_digest.get("dataset"),
+        "research_question": audit_digest.get("research_question"),
         "quality": audit_digest.get("quality_summary"),
         "tool_results": audit_digest.get("tool_results"),
         "decisions": audit_digest.get("decisions"),

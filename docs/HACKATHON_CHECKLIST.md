@@ -10,14 +10,15 @@ Only items verified in this environment are checked. See
       server smoke test returning HTTP 200)
 - [x] Sample data loads (bundled `data/sample_voltage_current.csv`, 11 rows)
 - [x] Invalid data is handled transparently (excluded-row counts shown)
-- [x] Scientific calculations are deterministic and tested (112 offline
-      tests, independent `lstsq` oracle)
+- [x] Scientific calculations are deterministic and tested (348 offline
+      tests, independent `lstsq` oracle and synthetic known-value datasets)
 - [x] Graphs and metrics match the underlying analysis (CLI artifact test,
       AppTest metric assertions, residual identity)
 - [x] AI generation handles missing credentials and provider errors
 - [x] Empty, malformed, oversized, and truncated model responses are rejected
-- [x] Valid reports satisfy the application's schema (8 sections, 6 claim
-      fields, size limits; single validator shared by producer and UI)
+- [x] Valid reports satisfy the application's schema (two strict profiles,
+      6 claim fields + evidence IDs when computed IDs are supplied, size
+      limits; single validator shared by producer, UI and CLI)
 - [x] Reports correspond to the currently selected dataset (SHA-256 context
       hash including the provider model)
 - [x] Exports are consistent with displayed results (JSON/CSV/Markdown)
@@ -66,6 +67,10 @@ Only items verified in this environment are checked. See
 - [x] `developer`/`temperature`/`max_completion_tokens` aligned with Meta's
       documented conventions
 - [x] `BASETEN_MODEL` override supported for dated hackathon model IDs
+- [x] Bounded transient 408/429/5xx retries and a safe HTTP-400 shape fallback
+- [x] Honest `provider_status()` (never claims live verification from a key)
+- [x] Explicitly labelled deterministic OFFLINE MOCK path (UI button, CLI flag,
+      distinct export headings); never substituted for a live response
 - [ ] **Live end-to-end verification with a real `BASETEN_API_KEY`** (two
       opt-in live tests: connectivity and structured report)
 
@@ -79,13 +84,16 @@ Only items verified in this environment are checked. See
 - [x] Generated CLI artifacts are gitignored (`results/README.md`)
 - [x] CSV headers sanitized against spreadsheet formula injection
 
-## Quality gates (measured 26 Oct 2026)
+## Quality gates (measured 27 Oct 2026)
 
-- [x] 327 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
+- [x] 348 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
 - [x] 98% statement coverage across the four application modules
 - [x] `ruff check .` clean
 - [x] All Python modules byte-compile
-- [x] Streamlit AppTest covers the real UI script and upload paths
+- [x] Streamlit AppTest covers both UI scripts, upload paths and the mock button
+- [x] `run_agent_demo.py --case all --strict` → 7/7 expected A-E states
+- [x] `pytest -m live -q` → 2 skipped, 348 deselected (no key configured)
+- [x] `pytest -q --cov=ask_muse --cov=result_schema --cov=agent_* --cov=run_agent_demo` → 92% of 1,574 statements
 
 ## Official rules and submission
 

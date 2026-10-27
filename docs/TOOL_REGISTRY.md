@@ -24,6 +24,10 @@ result: ToolResult = execute_tool(name, params, ctx)
 
 ## Tools
 
+There are **13** registered tools (the original ten plus three added in the
+master-prompt phase). `tests/test_agent_tools.py` asserts the manifest size and
+that the manifest is exactly the registry.
+
 | Tool | Parameters | Deterministic source | Side effect | Purpose |
 | --- | --- | --- | --- | --- |
 | `inspect_dataset` | none | `infer_columns`, `suggest_roles`, `build_plan`, `apply_cleaning`, `paired_values` | read-only | Structured data-quality summary: rows, numeric columns, missing/invalid/non-finite counts, duplicate headers, ambiguous roles, complete X/Y pairs, warnings. |
@@ -33,6 +37,9 @@ result: ToolResult = execute_tool(name, params, ctx)
 | `outlier_scan` | `column` | `statistics_core.outlier_diagnostics` | read-only | IQR flags only; never removes observations. |
 | `fit_curve` | `x`, `y`, `model`, `degree?: 1..4`, `weights?: column` | `fitting_core.fit_model` | read-only | Fits one of `linear`, `polynomial`, `exponential`, `logarithmic`, `power`; returns parameters, errors, metrics, `fit_ref`. |
 | `diagnose_fit` | `fit_ref` | `agent_diagnostics.diagnose_fit` | read-only | `PASS` / `POOR_FIT` / `FAILED` / `INSUFFICIENT` with reasons. |
+| `compare_models` | `x`, `y`, `models?: list[str]` (<=3, allowlisted), `degree?: 1..4` | `fitting_core.fit_model`, `compare_models` | read-only | Fits up to three models on the same pairs and ranks them by computed AIC / adjusted R². |
+| `evidence_summary` | none | `ToolContext.fits` | read-only | Lists computed fit result IDs, models, R², RMSE and observation counts from this run. |
+| `time_series_summary` | `time`, `value`, `max_lag?: 1..5` | `statistics_core.correlation`, NumPy | read-only | Descriptive step statistics and lag correlations; explicitly no forecasting or causal claim. |
 | `render_plot` | `plot_type`, `x`, `y`, `group?`, `time?` | `visualization_core.build_chart` | read-only | Builds one of 10 allowlisted charts; reports validity, row count, warnings and notes. |
 | `request_confirmation` | `action: remove_duplicate_rows\|write_export_files` | none | **destructive - gated** | Records explicit user confirmation; never performs the action itself. |
 | `declare_insufficient` | `reason` | none | terminal | Stops the run with a stated evidence gap. |

@@ -29,8 +29,11 @@ def test_sample_workflow_renders_without_exceptions():
     assert metrics["Slope (ΔV / ΔI)"] == "4.99091"
     assert metrics["R²"] == "0.999803"
     assert len(at.get("download_button")) == 3
-    assert len(at.button) == 1
+    # Live AI and the explicitly labelled offline MOCK are separate actions:
+    # a mock can never be silently substituted for a provider response.
+    assert len(at.button) == 2
     assert at.button[0].label == "Generate evidence-grounded interpretation"
+    assert "OFFLINE MOCK" in at.button[1].label and "NOT AI" in at.button[1].label
 
 
 def test_provider_status_is_shown_when_no_key():
@@ -257,3 +260,22 @@ def test_original_sample_with_ohmic_layer_reports_candidate_resistance():
     assert "electrical resistance (candidate)" in report_preview
     assert "ohm" in report_preview
     assert "HYPOTHESIS" in report_preview
+
+
+def test_offline_mock_button_is_labelled_and_never_calls_provider(monkeypatch):
+    import ask_muse
+
+    def forbidden(**kwargs):
+        raise AssertionError("The offline mock must never construct a provider client.")
+
+    monkeypatch.setattr(ask_muse, "OpenAI", forbidden)
+    at = run_app()
+    assert len(at.button) == 2
+    at.button[1].click().run()
+    assert not at.exception
+    assert not at.error
+    assert any("OFFLINE MOCK report" in item.value for item in at.get("markdown"))
+    assert any("NOT AI" in item.value for item in at.warning)
+    preview = " ".join(item.value for item in at.get("code"))
+    assert "OFFLINE MOCK report" in preview
+    assert "is_mock" not in preview  # report.md labels it in prose, not raw JSON

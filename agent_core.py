@@ -15,7 +15,13 @@ import pandas as pd
 
 import agent_planner as planner
 from agent_audit import AgentRun
-from agent_diagnostics import PASS, choose_alternative, classify_quality
+from agent_diagnostics import (
+    PASS,
+    choose_alternative,
+    clarify_question,
+    classify_quality,
+    normalize_question,
+)
 from agent_tools import (
     MAX_FIT_ATTEMPTS,
     MAX_RETRIES,
@@ -35,6 +41,7 @@ FAILED = "FAILED"
 class OrchestratorConfig:
     use_ai: bool | None = None
     user_confirmed: bool = False
+    research_question: str | None = None
     max_steps: int = MAX_STEPS
     max_retries: int = MAX_RETRIES
     max_fit_attempts: int = MAX_FIT_ATTEMPTS
@@ -70,12 +77,41 @@ class AnalysisOrchestrator:
             "max_fit_attempts": self.config.max_fit_attempts,
             "max_wall_s": self.config.max_wall_s,
         }
-        run = AgentRun(dataset=load_info, limits=limits)
+        question, question_source = normalize_question(self.config.research_question)
+        clarification = clarify_question(question, load_info["columns"])
+        run = AgentRun(
+            dataset=load_info, limits=limits,
+            research_question=question, question_source=question_source,
+        )
         ctx = ToolContext(
             frame=source, load_info=load_info,
             deadline=time.monotonic() + self.config.max_wall_s,
             user_confirmed=self.config.user_confirmed,
         )
+
+        # 0. Research question + deterministic clarification gate ---------
+        question_seq = run.log(
+            phase="question", actor="user",
+            status="needs_clarification" if clarification["needed"] else "ok",
+            result_digest={
+                "question": question, "source": question_source,
+                "clarification": clarification,
+            },
+            decision=("Ambiguous question: request user clarification before any tool runs."
+                      if clarification["needed"] else
+                      "Actionable research question recorded; analysis may proceed."),
+        )
+        if clarification["needed"]:
+            run.quality_summary = {"research_question": question,
+                                   "status": "clarification_required"}
+            run.finalize(
+                state=NEEDS_CLARIFICATION,
+                conclusion=("The agent stopped before any analysis. The research question is "
+                            "ambiguous: " + " ".join(clarification["reasons"])),
+                reasons=clarification["reasons"], clarification=clarification,
+                evidence_refs=[question_seq],
+            )
+            return run
 
         # 1. Inspect -----------------------------------------------------
         inspected = execute_tool("inspect_dataset", {}, ctx)
@@ -106,7 +142,7 @@ class AnalysisOrchestrator:
                     decision="recovery without deleting or imputing observations")
 
         # 3. Plan + validate ---------------------------------------------
-        plan = self._acquire_plan(run, quality)
+        plan = self._acquire_plan(run, quality, research_question=question)
         strategy = plan["on_poor_fit"]["strategy"]
         fallback_models = list(plan["on_poor_fit"]["fallback_models"])
 
@@ -255,14 +291,19 @@ class AnalysisOrchestrator:
         return run
 
     # ------------------------------------------------------------------
-    def _acquire_plan(self, run: AgentRun, quality: dict) -> dict:
+    def _acquire_plan(self, run: AgentRun, quality: dict,
+                      research_question: str | None = None) -> dict:
         """Obtain, validate, and fall back on a plan. Returns only accepted plans."""
         raw = None
         candidate_source = "deterministic_fallback"
         if self.config.use_ai:
             try:
-                provider = self.config.plan_provider or planner.request_agent_plan
-                raw = provider(quality)
+                if self.config.plan_provider is not None:
+                    raw = self.config.plan_provider(quality)
+                else:
+                    raw = planner.request_agent_plan(
+                        quality, research_question=research_question
+                    )
                 candidate_source = "muse_spark"
             except Exception as exc:
                 run.log(phase="plan", actor="ai", status="unavailable",

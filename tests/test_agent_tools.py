@@ -35,7 +35,7 @@ def ctx():
 
 def test_registry_manifest_is_closed_and_descriptive():
     manifest = registry_manifest()
-    assert len(manifest) == 10
+    assert len(manifest) == len(TOOL_REGISTRY) == 13
     assert {item["tool"] for item in manifest} == set(TOOL_REGISTRY)
     assert all(item["description"] for item in manifest)
     assert MAX_ROWS == 50_000 and MAX_DEGREE == 4
@@ -145,3 +145,41 @@ def test_tool_timeout_is_bounded(ctx):
     ctx.deadline = 0.0
     result = execute_tool("describe_statistics", {"columns": ["x"]}, ctx)
     assert not result.ok and "deadline" in result.error
+
+
+def test_compare_models_and_evidence_summary_use_only_computed_fits(ctx):
+    fit = execute_tool("fit_curve", {"x": "x", "y": "y", "model": "linear"}, ctx)
+    assert fit.ok
+    comparison = execute_tool(
+        "compare_models", {"x": "x", "y": "y", "models": ["linear", "polynomial"]}, ctx
+    )
+    assert comparison.ok, comparison.error
+    rows = comparison.result["comparison"]
+    assert len(rows) == 2 and all(row["success"] for row in rows)
+    assert any(row["r2"] == pytest.approx(1.0) for row in rows)
+    assert comparison.result["n_observations"] == 10
+
+    summary = execute_tool("evidence_summary", {}, ctx)
+    assert summary.ok
+    assert summary.result["n_fits"] == 1
+    assert summary.result["evidence"][0]["result_id"].startswith("fit.fit_")
+    assert summary.result["n_valid_pairs"] == 10
+
+    bad = execute_tool("compare_models",
+                       {"x": "x", "y": "y", "models": ["not_a_model"]}, ctx)
+    assert not bad.ok and "must contain only" in bad.error
+
+
+def test_time_series_summary_is_descriptive_and_bounded(ctx):
+    result = execute_tool("time_series_summary",
+                          {"time": "x", "value": "y", "max_lag": 2}, ctx)
+    assert result.ok, result.error
+    assert result.result["n_points"] == 10
+    assert result.result["mean_step"] == pytest.approx(2.0)
+    assert result.result["lag_correlations"]["1"]["coefficient"] == pytest.approx(1.0)
+    assert set(result.result["lag_correlations"]) == {"1", "2"}
+    assert "no forecasting" in result.result["note"]
+
+    bad = execute_tool("time_series_summary",
+                       {"time": "x", "value": "y", "max_lag": 9}, ctx)
+    assert not bad.ok and "maximum" in bad.error

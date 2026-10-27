@@ -134,3 +134,18 @@ See the "Supported scope and honest limitations" section of `README.md`. The
 platform does not claim universal file-format support or universal scientific
 analysis. It supports bounded delimited-text import, a defined set of
 statistics/plots/models and explicitly selected interpretation layers.
+
+---
+
+## Master-prompt platform update (27 Oct 2026)
+
+`ai_context()` now accepts `research_question` and emits bounded `result_ids`
+plus an `evidence_index` map from `result_schema.evidence_index()`. The ID list
+and map stay consistent while the context is trimmed to `max_chars`. Step F in
+`general_app.py` offers a profile selector (`legacy` / `scientific`), a live
+Muse Spark button, and a **separate** deterministic OFFLINE MOCK button. The
+sidebar and step F show `ask_muse.provider_status()`, which never claims live
+verification. `markdown_report()` section 10 now has distinct headings and
+disclaimers for AI-generated text and a mock, and prints computed result IDs
+for claims. The CLI exposes the same capabilities through `--question`,
+`--report-profile`, `--ai-mock` and `--agent-question`.

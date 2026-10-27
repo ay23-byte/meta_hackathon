@@ -14,6 +14,18 @@ The original voltage-current sample workflow is preserved unchanged in
 `app.py` / `analyze_experiment.py`. The general platform lives in
 `general_app.py` / `analyze_dataset.py` and shares the same provider adapter.
 
+**Master-prompt update (27 Oct 2026).** The report layer now has two strictly
+validated profiles (`legacy` eight sections by default and an opt-in
+`scientific` eight-section report), computed-result IDs that every AI claim
+must cite, bounded retries for transient provider failures, and an honest
+`provider_status()` that never claims live verification. A deterministic
+**OFFLINE MOCK** report is available from a separate, conspicuously labelled
+button and `--ai-mock`; it is never presented as Muse Spark output. The bounded
+agent now records a user research question, asks for clarification on vague
+questions before running any tool, and has three additional allowlisted tools
+(`compare_models`, `evidence_summary`, `time_series_summary`). Reproducible
+demos A-E include an ambiguous question and a simulated provider outage.
+
 > Built with Muse Spark Open. Muse Spark is optional; every number in the app is
 > computed locally and works without an API key.
 
@@ -61,11 +73,15 @@ not hardcode those column names or units.
   tracebacks. Model suggestions are labelled shape heuristics; AIC /
   adjusted-R² comparison is shown. Predictions flag extrapolation.
 - **F - Interpret.** Optional Muse Spark report generated only from a compact,
-  deterministic-only context (no raw rows, no prior AI text). Eight legacy
-  sections remain the default; a registry of ten sections allows opt-in
-  alternatives. Strict validation rejects unexpected/duplicate/oversized
-  sections, extra keys, and empty content. AI prose is labelled as unverified
-  hypotheses.
+  deterministic-only context (no raw rows, no prior AI text). The `legacy`
+  eight-section profile remains the default; a `scientific` profile adds
+  Research Question / Dataset Overview / Analysis Performed / Main Quantitative
+  Findings / Model-Fit Assessment / Possible Scientific Interpretation /
+  Recommended Next Investigation. Every claim must cite computed `result_ids`.
+  Strict validation rejects unexpected/duplicate/oversized sections, extra
+  keys, bad evidence IDs and empty content. AI prose is labelled as unverified
+  hypotheses. A separate button and `--ai-mock` generate an explicitly labelled
+  deterministic OFFLINE MOCK report — **NOT AI** — for offline demos.
 - **G - Export.** One result schema (v2.0) drives cleaned CSV, descriptive
   statistics CSV, fit parameter and metric CSVs, strict JSON, Markdown report,
   interactive plot HTML and locally rendered plot PNG, all bundled in a ZIP.
@@ -82,13 +98,16 @@ current/voltage unit pair. Filenames and column names never select a domain.
 LabLens is not just a CSV dashboard with an AI summary. An **Analysis
 Orchestrator** (`agent_core.py`) runs a bounded, testable loop:
 
+0. The user research question is recorded; a deterministic gate requests
+   clarification with concrete options before **any** tool runs if it is vague.
 1. `inspect_dataset` produces a structured data-quality summary.
 2. Muse Spark (or an offline fallback) proposes a plan of tool names and
    parameters — **never code**.
 3. `validate_plan` rejects unknown tools, bad parameters, forbidden tokens and
    oversized plans before anything executes.
-4. A closed registry (`docs/TOOL_REGISTRY.md`) dispatches ten validated
-   Python tools: statistics, correlation, plotting, fitting and diagnostics.
+4. A closed registry (`docs/TOOL_REGISTRY.md`) dispatches thirteen validated
+   Python tools: statistics, correlation, model comparison, evidence summary,
+   time-series summary, plotting, fitting and diagnostics.
 5. Deterministic diagnostics inspect the actual fit; poor fits trigger a
    bounded retry with a validated alternative model.
 6. The agent may stop with `INSUFFICIENT_EVIDENCE` or `NEEDS_CLARIFICATION`.
@@ -107,9 +126,11 @@ python run_agent_demo.py --case all --strict --output-dir outputs/agent_demo
 python analyze_dataset.py data/agent_examples/case_b_curved.csv --agent --output-dir outputs/agent
 ```
 
-Five synthetic cases cover success (A), poor initial fit with a validated
-alternative (B), no justifiable model (B'), messy-data recovery (C) and an
-ambiguous schema requiring clarification (C'). Everything runs offline; with
+Seven reproducible cases cover five required scenarios: success (A), poor
+initial fit with a validated alternative (B), no justifiable model (B'),
+messy-data recovery (C), ambiguous schema (C'), ambiguous research question
+(D) and a simulated provider outage (E) that falls back to a deterministic
+plan and writes a labelled OFFLINE MOCK report. Everything runs offline; with
 `BASETEN_API_KEY` set, `--use-ai` / `--agent-use-ai` let Muse Spark propose the
 plan. See `docs/AGENT_WORKFLOW.md` for the diagram, verification matrix and the
 explicit list of live-unverified behaviours.
@@ -130,8 +151,19 @@ python -m streamlit run general_app.py
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m streamlit run general_app.py
+```
+
+Exact PowerShell verification commands (run from the repository root):
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m compileall -q -x '\.venv|\.git' .
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -m live -q
+.\.venv\Scripts\python.exe -B run_agent_demo.py --case all --strict --output-dir outputs\agent_demo
+.\.venv\Scripts\python.exe -B analyze_dataset.py data\sample_voltage_current.csv --x current_A --y voltage_V --output-dir outputs\sample --ai-mock --report-profile scientific --question "What is the slope?"
 ```
 
 If activation is blocked, call `.venv\Scripts\python.exe` directly. No
@@ -159,6 +191,11 @@ python analyze_dataset.py data/examples/synthetic_calibration.csv \
 # Columns inferred automatically; curved model
 python analyze_dataset.py data/examples/synthetic_quadratic.csv \
   --model polynomial --degree 2 --output-dir outputs/quad
+
+# Explicitly labelled offline MOCK scientific report (no key, no network)
+python analyze_dataset.py data/sample_voltage_current.csv \
+  --x current_A --y voltage_V --ai-mock --report-profile scientific \
+  --question "What is the slope?" --output-dir outputs/mock
 ```
 
 Synthetic example datasets are documented in `data/examples/README.md`. They
@@ -176,14 +213,14 @@ python -m compileall -q *.py
 Measured in this repository on 27 Oct 2026 (Linux, CPython 3.11,
 pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
 
-- **327 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
-  98 new agent/encoding tests were added on top of the 229-test platform suite.
+- **348 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
+  the master-prompt phase added 21 tests on top of the 327-test baseline.
 - `ruff check .` clean; `python -m compileall -q *.py` exits 0.
 - **91% statement coverage** of the nine original general-purpose modules plus
   the general CLI (1,338 of 1,463 statements; per module 87-98%), and **90%**
   of the six agent modules (806 of 899 statements; per module 83-98%).
-  Five-case agent demo passes `--strict` with all observed states matching
-  expectations.
+  Seven-case agent demo passes `--strict` with all observed states matching
+  expectations (A, B, B', C, C', D, E).
 - Streamlit `AppTest` runs both UI scripts, including different-column uploads,
   role changes, cleaning previews, invalid inputs, AI validation and exports.
 - Local Streamlit HTTP smoke test: `/` and `/_stcore/health` returned 200 for
@@ -209,8 +246,10 @@ implemented, verified offline, and still unverified live.
 2. Add your private key as `BASETEN_API_KEY=...`.
 3. Restart Streamlit.
 
-The app works without a key: calculations, plots and exports remain available;
-only AI interpretation is disabled. The default model is the officially
+The app works without a key: calculations, plots, exports, agent audit trails
+and the explicitly labelled OFFLINE MOCK report remain available; only *live*
+AI interpretation is disabled. The sidebar shows an honest provider status
+(`live_verified` is always false until a real call is observed). The default model is the officially
 documented `meta-models/muse-spark-open`. If your account was assigned a dated
 variant, set `BASETEN_MODEL` in `.env`. Never commit, print or screen-share a
 key; provider errors are redacted.
@@ -249,12 +288,13 @@ Other limitations:
 
 ## Documentation
 
-- `docs/AGENT_WORKFLOW.md` - agent diagram, bounds, three demo cases, verification matrix
+- `docs/PROJECT_AUDIT.md` - measured baseline audit and master-prompt resolution log
+- `docs/AGENT_WORKFLOW.md` - agent diagram, bounds, A-E demo cases, verification matrix
 - `docs/TOOL_REGISTRY.md` - the closed allowlist and parameter specs
 - `docs/GENERAL_PLATFORM.md` - module map, result schema, design decisions
 - `docs/IMPLEMENTATION_REPORT.md` - measured results, changes and open items
 - `PROJECT_AUDIT.md` - historical audit of the original sample workflow
-- `docs/ARCHITECTURE.md` - original data flow
+- `docs/ARCHITECTURE.md` - original data flow plus master-prompt boundaries
 - `docs/SCIENTIFIC_VALIDATION.md` - equations and numerical tests
 - `docs/PROVIDER_INTEGRATION.md` - Muse Spark contract and verification status
 - `docs/EVALUATION_PLAN.md`, `docs/DEMO_SCRIPT.md`, `docs/HACKATHON_*.md` - evaluation and submission material

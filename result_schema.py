@@ -107,12 +107,89 @@ def results_json(result: dict) -> bytes:
     return json.dumps(json_safe(result), ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
 
 
-def ai_context(result: dict, *, max_chars: int = 28_000) -> dict:
+def _evidence_slug(value, limit: int = 24) -> str:
+    """Short, safe ASCII fragment for a computed result ID."""
+    text = "".join(ch if (ch.isascii() and (ch.isalnum() or ch in "_-.")) else "_"
+                   for ch in str(value))
+    return (text.strip("_.")[:limit] or "x")
+
+
+def evidence_index(result: dict, *, limit: int = 12) -> dict:
+    """Compact ID -> computed-values map for evidence-linked AI claims.
+
+    IDs are stable enough for a reproducible audit trail and contain only
+    characters allowed by ``ask_muse``. Every value is copied from the local
+    deterministic result; no raw rows or AI prose are included.
+    """
+    index: dict[str, dict] = {}
+
+    def add(base: str, label: str, values: dict):
+        key = _evidence_slug(base, 40)
+        candidate, suffix = key, 2
+        while candidate in index:
+            candidate = f"{key}_{suffix}"
+            suffix += 1
+        if len(candidate) > 48:
+            candidate = candidate[:48]
+        index[candidate] = {"label": label, **json_safe(values)}
+
+    source = result.get("source") or {}
+    add("dataset.source", "Dataset provenance", {
+        "rows": source.get("rows"), "n_columns": len(source.get("columns") or []),
+        "sha256": source.get("sha256"), "encoding": source.get("encoding"),
+    })
+    cleaning = result.get("cleaning") or {}
+    add("cleaning.summary", "Cleaning summary", {
+        "rows_in": cleaning.get("rows_in"), "rows_out": cleaning.get("rows_out"),
+        "duplicates_removed": cleaning.get("duplicates_removed"),
+        "invalid_pair_rows_excluded": cleaning.get("invalid_pair_rows_excluded"),
+    })
+    corr = result.get("correlation") or {}
+    if isinstance(corr, dict):
+        add(f"corr.{corr.get('method') or 'association'}", "Association", {
+            key: corr.get(key) for key in ("method", "coefficient", "p_value", "n_valid")
+        })
+    fit = result.get("fit") or {}
+    if isinstance(fit, dict) and fit:
+        add(f"fit.{fit.get('model') or 'model'}", "Selected fit", {
+            "success": fit.get("success"), "model": fit.get("model"),
+            "label": fit.get("label"), "n_observations": fit.get("n_observations"),
+            "parameters": fit.get("parameters"),
+            "r2": (fit.get("metrics") or {}).get("r2"),
+            "adjusted_r2": (fit.get("metrics") or {}).get("adjusted_r2"),
+            "rmse": (fit.get("metrics") or {}).get("rmse"),
+        })
+    for row in (result.get("model_comparison") or [])[:3]:
+        if isinstance(row, dict):
+            add(f"compare.{row.get('model') or 'model'}", "Model comparison", {
+                key: row.get(key) for key in
+                ("model", "success", "n_observations", "r2", "adjusted_r2", "aic", "rmse")
+            })
+    for name, summary in (result.get("statistics") or {}).items():
+        if not isinstance(summary, dict):
+            continue
+        add(f"stat.{name}", "Descriptive statistics", {
+            "column": name,
+            **{key: summary.get(key) for key in
+               ("n_valid", "mean", "median", "std_sample", "min", "max", "ci_mean_95")},
+        })
+    outliers = result.get("outliers") or {}
+    if isinstance(outliers, dict) and outliers:
+        add("outliers.summary", "Outlier diagnostics", {
+            key: outliers.get(key) for key in ("n_valid", "n_low", "n_high", "method")
+        })
+    return dict(list(index.items())[:max(1, limit)])
+
+
+def ai_context(result: dict, *, max_chars: int = 28_000,
+               research_question: str | None = None) -> dict:
     """Compact, deterministic-only context for the AI provider.
 
     Deliberately excludes any prior AI text, raw data rows and free-form user
     notes, so the model can only cite values computed by this application.
-    Large blocks are progressively trimmed until the JSON fits ``max_chars``.
+    Includes bounded ``result_ids`` / ``evidence_index`` entries so claims can
+    be linked to computed values. Large blocks are progressively trimmed until
+    the JSON fits ``max_chars``.
     """
     stats = {}
     for name, summary in (result.get("statistics") or {}).items():
@@ -123,9 +200,14 @@ def ai_context(result: dict, *, max_chars: int = 28_000) -> dict:
             "median", "std_sample", "min", "q1", "q3", "max", "ci_mean_95",
             "ci_mean_method", "constant",
         )}
+    evidence = evidence_index(result)
     context = {
         "schema_version": result.get("schema_version"),
         "note": "All values below were computed locally. Do not invent any other numbers.",
+        "research_question": (str(research_question).strip()[:500]
+                              if research_question else None),
+        "result_ids": list(evidence),
+        "evidence_index": evidence,
         "source": {key: (result.get("source") or {}).get(key) for key in (
             "name", "rows", "columns", "delimiter", "encoding", "warnings"
         )},
@@ -143,6 +225,18 @@ def ai_context(result: dict, *, max_chars: int = 28_000) -> dict:
     def size() -> int:
         return len(json.dumps(json_safe(context), ensure_ascii=False, allow_nan=False))
 
+    def shrink_evidence(keep: int):
+        """Keep IDs and their evidence values consistent while trimming."""
+        trimmed = dict(list(evidence.items())[:keep])
+        context["evidence_index"] = trimmed
+        context["result_ids"] = list(trimmed)
+        return trimmed
+
+    if size() > max_chars:
+        for keep in (6, 3, 1):
+            shrink_evidence(keep)
+            if size() <= max_chars:
+                return json_safe(context)
     if size() > max_chars:
         # Keep the most decision-relevant blocks; drop the most verbose first.
         for key in ("model_suggestions", "model_comparison", "cleaning", "outliers"):
@@ -165,12 +259,16 @@ def ai_context(result: dict, *, max_chars: int = 28_000) -> dict:
         if isinstance(source, dict) and source.get("columns"):
             source["columns"] = list(source["columns"])[:50]
     if size() > max_chars:
+        minimal_evidence = shrink_evidence(1)
         context = {
             "note": "Context truncated to fit the AI size limit; use the exported results.json for full detail.",
+            "research_question": context.get("research_question"),
             "roles": context.get("roles"),
             "fit": context.get("fit"),
             "correlation": context.get("correlation"),
             "warnings": context.get("warnings"),
+            "result_ids": list(minimal_evidence),
+            "evidence_index": minimal_evidence,
         }
     return json_safe(context)
 
@@ -329,10 +427,20 @@ def markdown_report(result: dict) -> str:
     ai = result.get("ai")
     if ai:
         structured = ai.get("structured") or {}
-        lines += ["", "## 10. AI-generated interpretation (unverified hypotheses)", "",
-                  f"Provider model: {_fmt(ai.get('model'))}. The following text was generated by an AI "
-                  "model from the computed context above. It is not experimental evidence and may be wrong.",
-                  ""]
+        is_mock = bool(ai.get("is_mock") or ai.get("source") == "offline_mock")
+        if is_mock:
+            lines += ["", "## 10. OFFLINE MOCK report (deterministic template, NOT AI)", "",
+                      f"Generator: {_fmt(ai.get('model'))}. This is a local deterministic template "
+                      "built from the computed context above. It is NOT a Muse Spark response, NOT "
+                      "an AI model output, and NOT experimental evidence. All numbers come from "
+                      "sections 1-9.", ""]
+        else:
+            lines += ["", "## 10. AI-generated interpretation (unverified hypotheses)", "",
+                      f"Provider model: {_fmt(ai.get('model'))}. The following text was generated by an AI "
+                      "model from the computed context above. It is not experimental evidence and may be wrong.",
+                      ""]
+        if ai.get("disclaimer"):
+            lines += [f"> {ai['disclaimer']}", ""]
         for section in structured.get("sections") or []:
             lines += [f"### {section.get('title')}", "", str(section.get("content", "")), ""]
         for i, claim in enumerate(structured.get("claims") or [], start=1):
@@ -340,7 +448,10 @@ def markdown_report(result: dict) -> str:
                       f"- Evidence: {claim.get('evidence')}",
                       f"- Confidence/uncertainty: {claim.get('confidence_or_uncertainty')}",
                       f"- Limitation: {claim.get('limitation')}",
-                      f"- Proposed verification: {claim.get('proposed_verification')}", ""]
+                      f"- Proposed verification: {claim.get('proposed_verification')}"]
+            if claim.get("evidence_ids"):
+                lines.append(f"- Computed result IDs: {', '.join(claim['evidence_ids'])}")
+            lines.append("")
     else:
         lines += ["", "## 10. AI-generated interpretation", "",
                   "Not requested, or the provider was unavailable. All deterministic results above "

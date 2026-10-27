@@ -201,3 +201,33 @@ deadline could appear unexpired and the assertion failed. Fixed by using
 `max_wall_s=-1` (deadline already in the past), which is deterministic on both
 platforms. After the fix, `gh pr checks 3 --watch` reported all four matrix
 jobs passing. The annotation step remains in CI as a permanent diagnostic aid.
+
+---
+
+## Master-prompt phase (27 Oct 2026) — measured delta
+
+Baseline on this branch: 327 passed, 2 skipped; 5/5 agent demo states; ruff and
+compileall clean. After implementation:
+
+```text
+.venv/bin/ruff check .                    -> All checks passed
+.venv/bin/python -m compileall -q -x '\.venv|\.git' .  -> exit 0
+.venv/bin/python -m pytest -q             -> 348 passed, 2 skipped in ~70 s
+.venv/bin/python -m pytest -m live -q     -> 2 skipped, 348 deselected
+.venv/bin/python -B run_agent_demo.py --case all --strict
+                                         -> 7/7 OK (A, B, B', C, C', D, E)
+CLI --ai-mock --report-profile scientific
+                                         -> slope 4.99091, R² 0.9998029591946405,
+                                            labelled mock in report.md/results.json
+```
+
+New tests: `tests/test_master_prompt_features.py` (14), two new agent-tool
+tests, two new CLI tests, one new AppTest mock-button test, plus updated
+demo/orchestrator/registry assertions. New behaviour: scientific report
+profile, computed evidence IDs, offline mock, provider status, bounded
+transient retries, agent research-question clarification, three allowlisted
+tools and reproducible demos D/E.
+
+Still unverified: real Baseten reachability and a genuinely Muse-proposed plan
+driving a live agent run. No `BASETEN_API_KEY` was configured in this sandbox;
+the two live tests remain skipped. Do not claim live integration in the pitch.

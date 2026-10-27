@@ -108,3 +108,23 @@ Student-t CI, and IQR flags. See `tests/test_fitting_core.py` and
 
 See `docs/AGENT_WORKFLOW.md` for the full verification matrix and the explicit
 list of implemented-but-live-unverified behaviours.
+
+---
+
+## Master-prompt phase — measured gates (27 Oct 2026)
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Full offline suite | `pytest -q` | **348 passed, 2 skipped in ~70 s** |
+| Live-marker selection | `pytest -m live -q` | 2 skipped, 348 deselected (no key) |
+| Lint / byte-compile | `ruff check .`, `compileall` | clean / exit 0 |
+| Seven-case A-E demo | `python -B run_agent_demo.py --case all --strict` | 7/7 expected states OK |
+| New master-prompt tests | `pytest tests/test_master_prompt_features.py -q` | 14 passed |
+| Core-module coverage | `pytest -q --cov=ask_muse --cov=result_schema --cov=agent_* --cov=run_agent_demo` | 92% (1,441/1,574 statements) |
+| New agent tools | `pytest tests/test_agent_tools.py -k "compare_models or time_series"` | 2 passed |
+| CLI offline mock | `analyze_dataset.py ... --ai-mock --report-profile scientific` | labelled mock in `report.md` and `results.json`; slope 4.99091, R² 0.9998029591946405 |
+| AppTest mock button | `pytest tests/test_general_app.py -k offline_mock` | 1 passed; provider client never constructed |
+| Live provider | `pytest -m live -v` | **not run** — no `BASETEN_API_KEY` |
+
+The two skips are opt-in live tests, not hidden failures. No benchmark, latency
+or real-model reliability number is claimed.

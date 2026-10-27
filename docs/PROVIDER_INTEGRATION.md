@@ -161,3 +161,39 @@ any AI number not present in those outputs. Tests use a fake client and an
 injected `plan_provider`. **Live Muse-proposed plans remain unverified** in
 this environment because no `BASETEN_API_KEY` was configured. See
 `docs/AGENT_WORKFLOW.md`.
+
+---
+
+## Master-prompt provider update (27 Oct 2026)
+
+- **Two strict profiles.** `REPORT_PROFILES = {legacy, scientific}`. `legacy`
+  keeps `REQUIRED_TITLES` (eight) and the ten-title registry unchanged.
+  `scientific` has its own eight-title registry (Research Question, Dataset
+  Overview, Analysis Performed, Main Quantitative Findings, Model-Fit
+  Assessment, Uncertainty and Limitations, Possible Scientific Interpretation,
+  Recommended Next Investigation). Callers opt in with `profile="scientific"`;
+  unknown profiles and cross-profile section names are rejected.
+- **Evidence-linked claims.** When `ai_context()` supplies `result_ids`, the
+  prompt requires `evidence_ids` (1-4) per claim, drawn only from that list.
+  `validate_report()` enforces the same constraint locally. IDs are restricted
+  to `[A-Za-z0-9_.:-]{1,64}`; extra fields are discarded.
+- **Bounded transient retries.** `TRANSIENT_HTTP_STATUSES = {408,429,500,502,503,504}`;
+  `MAX_TRANSIENT_RETRIES = 2`; exponential backoff from 0.25 s. Transport
+  errors with no HTTP status get the same bound. 400 still triggers the single
+  conservative-shape fallback; other 4xx errors fail immediately. Raw exception
+  text is never surfaced. The OpenAI client keeps `max_retries=1`, so worst-case
+  attempts remain finite.
+- **Honest status.** `provider_status()` returns `api_key_configured`,
+  `key_source`, `env_file_present`, `mode`, `live_call_attempted=False`,
+  `live_verified=False`, `offline_mock_available=True` and a message. It makes
+  no network call and never includes the key. The Streamlit sidebar and step F
+  display it.
+- **Explicit offline mock.** `generate_mock_report()` is a separate function
+  with `source="offline_mock"`, `is_mock=True`, `model="offline-deterministic-mock"`
+  and `MOCK_DISCLAIMER` starting "OFFLINE MOCK REPORT ... NOT AI". It is NOT
+  reachable from `generate_interpretation()`; the UI uses a separate button and
+  the CLI uses `--ai-mock`. Exports label it in `report.md` and `results.json`.
+- **Live status in this workspace.** No `BASETEN_API_KEY` is configured here.
+  `pytest -m live -q` skips both live tests. Fake-client tests verify our
+  request/response contract, retries and schema, but **do not verify Baseten
+  reachability, entitlement, quota or a real Muse Spark response**.
