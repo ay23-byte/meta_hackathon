@@ -122,9 +122,10 @@ Only items verified in this environment are checked. See
    provider's availability or the model's reliability in producing the
    strict JSON schema.
 2. ~~GitHub Actions matrix has not been executed here.~~ **Resolved 27 Oct
-   2026:** PR #2 ran the full 2x2 matrix (Ubuntu/Windows x Python 3.11/3.12);
-   all four jobs passed, including lint, offline tests with coverage, and
-   byte-compilation.
+   2026:** PR #2 and PR #3 each ran the full 2x2 matrix (Ubuntu/Windows x
+   Python 3.11/3.12); all four jobs passed on both, including lint, offline
+   tests with coverage, and byte-compilation. PR #3's first run exposed a
+   Windows-only flaky deadline test, which was fixed and re-verified.
 3. Demo video has not been recorded.
 4. Eligibility, acceptance, and final submission steps are the
    participant's responsibility.

@@ -43,6 +43,7 @@ Streamlit 1.66.1, Matplotlib 3.11.2, pytest 9.1.1):
 | CLI on calibration example with `--uncertainty abs_sigma` | Weighted fit enabled; slope 0.0817171 |
 | CLI on messy cp1252/semicolon example | cp1252 detected, 8 rows retained, invalid rows excluded from fit but kept in cleaned CSV |
 | GitHub Actions CI on PR #2 | `gh pr checks 2 --watch` → **4/4 jobs passed** (Ubuntu + Windows x Python 3.11 + 3.12); lint, offline tests with coverage, byte-compilation |
+| GitHub Actions CI on PR #3 (agent) | `gh pr checks 3 --watch` → **4/4 jobs passed** at commit `71a406b`; the first run failed 2/4 on Windows only (see below) |
 
 The two skipped tests are the opt-in live Muse Spark tests in `test_muse.py`.
 No `BASETEN_API_KEY` was set in this environment. Provider behaviour was
@@ -183,3 +184,20 @@ cp1252 example (`0xB0` -> UTF-8 `EF BF BD`). The shipped example is now valid
 UTF-8; all encoding-fallback assertions generate cp1252/latin-1 bytes in memory
 at test time (`tests/test_encoding_fallback.py`, plus the two modified tests).
 No tracked file now depends on non-UTF-8 bytes.
+
+
+## CI incident on PR #3 (fixed)
+
+The first PR #3 run passed both Linux jobs but failed both Windows jobs at the
+"Offline tests" step. Remote log archives were unreachable from this sandbox
+(`blob.core.windows.net` is outside the allowed hosts), so CI was changed to
+write `junit.xml` and emit per-failure `::error::` annotations, and the local
+tests were reviewed for platform sensitivity.
+
+Root cause: `test_global_deadline_halts_cleanly` used `max_wall_s=0`, relying on
+`time.monotonic()` advancing between two consecutive calls. Linux has
+nanosecond resolution; Windows `time.monotonic()` resolves at ~15 ms, so the
+deadline could appear unexpired and the assertion failed. Fixed by using
+`max_wall_s=-1` (deadline already in the past), which is deterministic on both
+platforms. After the fix, `gh pr checks 3 --watch` reported all four matrix
+jobs passing. The annotation step remains in CI as a permanent diagnostic aid.
