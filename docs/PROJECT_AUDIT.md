@@ -258,6 +258,12 @@ claim that every gap is closed; live provider behaviour remains unverified.
                                             -> 92% (1,441/1,574 statements) across those 8 modules
 ```
 
+## CI verification
+
+PR #4 ran `.github/workflows/ci.yml`; `gh pr checks 4 --watch` reported all four
+matrix jobs passing (Ubuntu/Windows x Python 3.11/3.12). This verifies the
+offline suite and lint on both operating systems, not live Muse Spark access.
+
 ## Remaining honest limits
 
 - No `BASETEN_API_KEY` is configured in this sandbox. Live Muse Spark

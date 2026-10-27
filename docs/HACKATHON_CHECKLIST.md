@@ -40,7 +40,8 @@ Only items verified in this environment are checked. See
 - [x] CI workflow added for Linux + Windows / Python 3.11 + 3.12
       (`.github/workflows/ci.yml`) — **config added; GitHub Actions run not
       executed in this environment**
-- [ ] Run the CI workflow on GitHub once and confirm both OS jobs pass
+- [x] PR #4 CI: all four matrix jobs passed (Ubuntu/Windows x Python
+      3.11/3.12), verified with `gh pr checks 4 --watch`
 
 ## Deterministic analysis (verified by tests)
 

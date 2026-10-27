@@ -228,6 +228,9 @@ profile, computed evidence IDs, offline mock, provider status, bounded
 transient retries, agent research-question clarification, three allowlisted
 tools and reproducible demos D/E.
 
+GitHub Actions PR #4: all four matrix jobs passed (Ubuntu/Windows x Python
+3.11/3.12) after this phase, verified with `gh pr checks 4 --watch`.
+
 Still unverified: real Baseten reachability and a genuinely Muse-proposed plan
 driving a live agent run. No `BASETEN_API_KEY` was configured in this sandbox;
 the two live tests remain skipped. Do not claim live integration in the pitch.
