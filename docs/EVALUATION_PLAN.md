@@ -76,7 +76,7 @@ sample-workflow gates above remain valid for `app.py`.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Offline tests | `python -m pytest -q` | 229 passed, 2 skipped |
+| Offline tests | `python -m pytest -q` | 327 passed, 2 skipped (98 new agent/encoding tests) |
 | New-module coverage | `pytest -m "not live" -q --cov=data_io ... --cov=analyze_dataset` | 91% statements (1,338/1,463); per module 87-98% |
 | Lint | `ruff check .` | clean |
 | Compile | `python -m compileall -q *.py` | clean |
@@ -90,3 +90,21 @@ units, exponential rate, logarithmic and power parameters, weighted-fit
 improvement, exponential doubling time, Pearson/Spearman correlations,
 Student-t CI, and IQR flags. See `tests/test_fitting_core.py` and
 `tests/test_statistics_core.py`.
+
+
+## Bounded analysis agent - measured gates (27 Oct 2026)
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Full offline suite | `python -m pytest -q` | 327 passed, 2 skipped |
+| Agent unit + orchestrator tests | `pytest tests/test_agent_*.py tests/test_encoding_fallback.py -q` | 98 passed |
+| Agent-module coverage | `pytest -m "not live" --cov=agent_* --cov=run_agent_demo` | 90% (806/899 statements; per module 83-98%) |
+| Five-case demo | `python run_agent_demo.py --case all --strict` | exit 0; all 5 observed states matched |
+| AI plan influence | `tests/test_agent_orchestrator.py::test_two_different_valid_ai_plans_produce_different_tool_sequences` | pass - different tool sequences and plan hashes |
+| Plan rejection | `tests/test_agent_orchestrator.py::test_rejected_ai_plan_never_executes_its_tools` | pass - fallback used, unknown tool never dispatched |
+| Grounding | `tests/test_agent_planner.py::test_grounding_check_rejects_invented_numbers` | pass - fabricated 42.123 rejected |
+| Bounds/consent | deadline, retry-budget, destructive-consent tests | pass |
+| Live Muse-proposed plan | `pytest -m live -v` | **not run** - no `BASETEN_API_KEY` |
+
+See `docs/AGENT_WORKFLOW.md` for the full verification matrix and the explicit
+list of implemented-but-live-unverified behaviours.

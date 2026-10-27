@@ -128,6 +128,30 @@ the platform is not limited to the voltage-current sample:
 
 Never present the synthetic example data as real measurements.
 
+## Agent demo (add ~45 s)
+
+Run `python run_agent_demo.py --case all --strict` in a terminal beside the app.
+Point at the console table: rows labelled **AI DECISION** are plan/selection
+steps; **DETERMINISTIC TOOL** rows are computed numbers. Then show:
+
+- Case A: `DONE`, 0 retries, conclusion cites R2 from the tool output.
+- Case B: linear fit fails diagnostics, the validated `polynomial` alternative
+  is selected, 1 retry, then `DONE`.
+- Case B': `INSUFFICIENT_EVIDENCE` with an explicit reason - no invented
+  conclusion.
+- Case C: missing/invalid/inf detected, all 9 rows retained, 6 pairs used.
+- Case C': `NEEDS_CLARIFICATION` before any fit.
+
+Open `outputs/agent_demo/b/agent_report.md` and show the plan validation block,
+the retry entry, the evidence refs and the Mermaid timeline. In the Streamlit
+app, tick "Run the bounded analysis agent" to show the same audit trail inline
+and note that `agent/` files are inside the exported ZIP.
+
+State plainly: with no key, the plan comes from the deterministic fallback;
+with a key, Muse Spark proposes it and the same validation applies. Do not
+claim a live Muse-planned run was demonstrated unless a key was actually
+configured and the log shows `plan_source: muse_spark`.
+
 ## After recording
 
 - [ ] Watch the whole video: no API key, `.env`, or secret is visible.

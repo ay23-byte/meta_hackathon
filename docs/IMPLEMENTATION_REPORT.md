@@ -32,16 +32,18 @@ Streamlit 1.66.1, Matplotlib 3.11.2, pytest 9.1.1):
 
 | Check | Result |
 | --- | --- |
-| `.venv/bin/python -m pytest -q` | **229 passed, 2 skipped** in 72.41 s (final run) |
-| `.venv/bin/python -m pytest -m "not live" -q` with coverage | 229 passed, 2 deselected |
+| `.venv/bin/python -m pytest -q` | **327 passed, 2 skipped** in 78.04 s (final run on `arena/1f347bab-meta-hackathon`) |
+| `.venv/bin/python -m pytest -m "not live" -q` with coverage | 327 passed, 2 deselected |
 | Coverage of the nine new deterministic modules + CLI | **91%** (1,338 statements covered of 1,463); per module 87-98% |
 | `.venv/bin/ruff check .` | All checks passed |
+| `python run_agent_demo.py --case all --strict` | 5/5 cases matched their expected state; 3 audit artifacts per case |
 | `.venv/bin/python -m compileall -q *.py` | Exit 0 |
 | `python -m streamlit run general_app.py --server.address 0.0.0.0 --server.port 8503` | Uvicorn started on `0.0.0.0:8503`; `/` HTTP 200, `/_stcore/health` HTTP 200, static JS HTTP 200 |
 | CLI on sample (`--domain ohmic --unit-x A --unit-y V`) | 16 artifacts written; slope 4.99091, R² 0.999803, candidate resistance 4.99091 ohm |
 | CLI on calibration example with `--uncertainty abs_sigma` | Weighted fit enabled; slope 0.0817171 |
 | CLI on messy cp1252/semicolon example | cp1252 detected, 8 rows retained, invalid rows excluded from fit but kept in cleaned CSV |
 | GitHub Actions CI on PR #2 | `gh pr checks 2 --watch` → **4/4 jobs passed** (Ubuntu + Windows x Python 3.11 + 3.12); lint, offline tests with coverage, byte-compilation |
+| GitHub Actions CI on PR #3 (agent) | `gh pr checks 3 --watch` → **4/4 jobs passed** at commit `71a406b`; the first run failed 2/4 on Windows only (see below) |
 
 The two skipped tests are the opt-in live Muse Spark tests in `test_muse.py`.
 No `BASETEN_API_KEY` was set in this environment. Provider behaviour was
@@ -110,3 +112,92 @@ Per-module coverage: `column_inference.py` 98%, `cleaning.py` 97%,
    enforced; larger datasets must be aggregated before upload.
 10. **Synthetic examples are illustrative only.** They must never be cited as
     experimental evidence.
+
+
+---
+
+# Addendum: bounded analysis agent (branch `arena/1f347bab-meta-hackathon`)
+
+## What was added
+
+| File | Purpose |
+| --- | --- |
+| `agent_tools.py` | Ten-tool closed registry, declarative parameter validation, bounded dispatch, `ToolContext`/`ToolResult`. |
+| `agent_planner.py` | Muse Spark plan prompt + strict `validate_plan`, `deterministic_plan` offline fallback, plan hash, numeric grounding check, optional grounded interpretation. |
+| `agent_diagnostics.py` | Deterministic `PASS`/`POOR_FIT`/`FAILED`/`INSUFFICIENT` verdicts, residual sign-runs test, quality gate, alternative selection. |
+| `agent_audit.py` | `AgentRun` with JSON / JSONL / Markdown / Mermaid exports, evidence refs, per-event actor labels. |
+| `agent_core.py` | `AnalysisOrchestrator` bounded state machine. |
+| `run_agent_demo.py` | Five reproducible synthetic cases, `--strict`, actor-labelled console trace. |
+| `data/agent_examples/` | Five clearly synthetic CSVs with known properties. |
+| `general_app.py` step H | Opt-in agent UI: consent checkbox, audit table, Mermaid timeline; audit files added to the export ZIP. |
+| `analyze_dataset.py --agent` | CLI writes `agent/` audit artifacts next to the standard exports. |
+| `docs/AGENT_WORKFLOW.md`, `docs/TOOL_REGISTRY.md` | Diagram, registry, bounds, verification matrix. |
+| 8 new test files | 98 new tests (agent + encoding fallback). |
+
+## Verification (measured)
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest -q` | **327 passed, 2 skipped** |
+| New agent + encoding tests | **98 passed** (8 files) |
+| `python run_agent_demo.py --case all --strict` | exit 0; A `DONE` (0 retries), B `DONE` (1 retry -> polynomial), B' `INSUFFICIENT_EVIDENCE`, C `DONE` (9 rows retained / 6 pairs), C' `NEEDS_CLARIFICATION` (0 fits) |
+| `ruff check .` | All checks passed |
+| AppTest on `general_app.py` | no exceptions; existing 1-button / 3-download contract intact; agent consent path renders audit metrics |
+| `analyze_dataset.py --agent` | writes `agent/agent_audit.json`, `agent_events.jsonl`, `agent_report.md` plus standard artifacts |
+
+Behaviours proven by tests (not just claimed): two different validated plans
+produce different executed tool sequences; a rejected plan never executes any
+of its tools and falls back; `halt_and_explain` suppresses retries;
+`max_retries=0` suppresses retries; the global deadline halts cleanly;
+destructive tools are rejected without consent; AI prose containing a number
+absent from tool outputs is rejected and the deterministic conclusion is kept;
+agent fit parameters equal a direct `fit_model` call.
+
+## Honest deviations from the earlier design proposal
+
+1. Case B' (constant response) halts immediately with `INSUFFICIENT_EVIDENCE`
+   rather than consuming all three fit attempts: R2 is undefined, so no
+   alternative model can be justified. This is the scientifically correct
+   choice; the proposal's "retries == 2" expectation was revised.
+2. Per-tool timeout uses a shared `ThreadPoolExecutor`; a timed-out tool is
+   abandoned (result discarded) rather than forcibly killed, because pure
+   NumPy work cannot be interrupted portably on Windows. Documented in
+   `docs/AGENT_WORKFLOW.md`.
+3. Final interpretation is always deterministic and grounded; Muse Spark
+   sections are optional additions that must pass the numeric grounding check.
+   This avoids ever presenting an LLM number as a computed result.
+
+## Still unverified
+
+- A **live** Muse Spark plan controlling a real run: no `BASETEN_API_KEY` was
+  configured, so the plan path was exercised with a fake OpenAI-compatible
+  client and an injected `plan_provider` seam. The two `live` tests remain
+  skipped.
+- Real-model reliability at producing the strict plan JSON on the first
+  attempt, and provider latency. These must be measured with a key; do not
+  present estimates as benchmarks.
+
+## Encoding fixture fix
+
+The earlier two-test failure was caused by a snapshot re-encoding the checked-in
+cp1252 example (`0xB0` -> UTF-8 `EF BF BD`). The shipped example is now valid
+UTF-8; all encoding-fallback assertions generate cp1252/latin-1 bytes in memory
+at test time (`tests/test_encoding_fallback.py`, plus the two modified tests).
+No tracked file now depends on non-UTF-8 bytes.
+
+
+## CI incident on PR #3 (fixed)
+
+The first PR #3 run passed both Linux jobs but failed both Windows jobs at the
+"Offline tests" step. Remote log archives were unreachable from this sandbox
+(`blob.core.windows.net` is outside the allowed hosts), so CI was changed to
+write `junit.xml` and emit per-failure `::error::` annotations, and the local
+tests were reviewed for platform sensitivity.
+
+Root cause: `test_global_deadline_halts_cleanly` used `max_wall_s=0`, relying on
+`time.monotonic()` advancing between two consecutive calls. Linux has
+nanosecond resolution; Windows `time.monotonic()` resolves at ~15 ms, so the
+deadline could appear unexpired and the assertion failed. Fixed by using
+`max_wall_s=-1` (deadline already in the past), which is deterministic on both
+platforms. After the fix, `gh pr checks 3 --watch` reported all four matrix
+jobs passing. The annotation step remains in CI as a permanent diagnostic aid.

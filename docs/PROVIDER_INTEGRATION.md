@@ -142,3 +142,22 @@ than presenting a saved or mocked report as a live result.
 The live endpoint is still unverified in this environment: no
 `BASETEN_API_KEY` was configured, so the two `live` tests remain skipped and
 all provider tests use a fake client.
+
+
+## Agent plan path (added 27 Oct 2026)
+
+`agent_planner.request_agent_plan()` is a second, independent Muse Spark call
+with the same conventions (`developer` role, JSON mode,
+`max_completion_tokens`, one HTTP-400 fallback, no `reasoning_content`
+substitution). It receives only a data-quality summary and the tool allowlist -
+no raw rows - and returns a JSON plan. `validate_plan()` rejects unknown tools,
+out-of-range parameters, forbidden tokens and oversized plans before any tool
+executes. `PlannerUnavailable` (including a missing key) falls back to
+`deterministic_plan()`, so the agent works fully offline.
+
+The optional final interpretation uses `generate_grounded_interpretation()`,
+whose context is only the executed tool outputs; `grounding_check()` rejects
+any AI number not present in those outputs. Tests use a fake client and an
+injected `plan_provider`. **Live Muse-proposed plans remain unverified** in
+this environment because no `BASETEN_API_KEY` was configured. See
+`docs/AGENT_WORKFLOW.md`.

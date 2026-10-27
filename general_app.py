@@ -24,6 +24,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 import ask_muse
+from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
@@ -739,6 +740,81 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# H · Bounded analysis agent (opt-in, validated tool calls only)
+# ---------------------------------------------------------------------------
+
+st.subheader("Optional bounded analysis agent (audit artifacts feed into step G)")
+st.caption("Plan -> strict validation -> allowlisted tool execution -> diagnostics -> bounded retry -> grounded interpretation. "
+           "This section runs before the export so its audit trail is included in the ZIP.")
+
+agent_audit_files: dict[str, bytes] = {}
+agent_consent = st.checkbox(
+    "Run the bounded analysis agent (consent: may call Muse Spark when a key is configured)",
+    value=False, key="agent_run_consent",
+)
+agent_use_ai = st.checkbox(
+    "Let Muse Spark propose the plan and the final interpretation", value=False,
+    key="agent_use_ai",
+)
+agent_destructive = st.checkbox(
+    "Allow destructive agent tools (off by default; no default plan uses them)",
+    value=False, key="agent_destructive_consent",
+)
+
+if agent_consent:
+    with st.spinner("Running bounded agent workflow..."):
+        try:
+            agent_run = AnalysisOrchestrator(OrchestratorConfig(
+                use_ai=bool(agent_use_ai and os.getenv("BASETEN_API_KEY", "").strip()),
+                user_confirmed=agent_destructive,
+            )).run(load)
+        except Exception as exc:
+            st.error(f"The agent could not complete: {_safe_error(exc)}")
+            agent_run = None
+    if agent_run is not None:
+        agent_data = agent_run.to_dict()
+        agent_audit_files = {
+            "agent/agent_audit.json": agent_run.to_json_bytes(),
+            "agent/agent_events.jsonl": agent_run.to_jsonl(),
+            "agent/agent_report.md": agent_run.to_markdown().encode("utf-8"),
+        }
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Agent state", agent_data["final"]["state"])
+        a2.metric("Plan source", agent_data["plan_source"].replace("_", " "))
+        a3.metric("Tool steps", str(agent_data["totals"]["steps"]))
+        a4.metric("Retries", str(agent_data["totals"]["retries"]))
+        st.caption(
+            "AI decisions = planning/selection. DETERMINISTIC TOOL rows are computed results "
+            "from validated Python functions. No model-generated code is executed."
+        )
+        event_rows = [
+            {
+                "#": event["seq"], "Phase": event["phase"],
+                "Actor": "AI DECISION" if event["actor"] == "ai" else "DETERMINISTIC",
+                "Tool": event["tool"] or "-", "Status": event["status"],
+                "Decision": event["decision"][:160],
+            }
+            for event in agent_data["events"]
+        ]
+        st.dataframe(pd.DataFrame(event_rows), width="stretch", hide_index=True)
+        with st.expander("Plan validation and data-quality summary"):
+            st.json({"plan_validation": agent_data["plan_validation"],
+                     "quality_summary": agent_data["quality_summary"]})
+        with st.expander("Agent timeline (Mermaid)"):
+            st.code(agent_run.mermaid(), language="mermaid")
+        st.info(agent_data["final"]["conclusion"])
+        if agent_data["final"].get("ai_report", {}):
+            report = agent_data["final"]["ai_report"]
+            if report.get("rejected"):
+                st.warning("An AI report was rejected by the grounding check; the deterministic conclusion was kept.")
+            else:
+                st.caption("Optional AI sections (unverified hypotheses) are included in agent_report.md.")
+        st.caption("Audit artifacts are included in the full export bundle below.")
+else:
+    st.caption("Agent not run. The standard A-G analysis above is complete and works without any AI service.")
+
+
+# ---------------------------------------------------------------------------
 # G · Export
 # ---------------------------------------------------------------------------
 
@@ -746,7 +822,8 @@ step_header("G", "Export", "Every artifact is derived from the single result sch
 
 try:
     exports = export_bundle(
-        result, cleaned_frame=working, descriptive_table=stats_table, charts=chart_files,
+        result, cleaned_frame=working, descriptive_table=stats_table,
+        charts={**chart_files, **agent_audit_files},
     )
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:

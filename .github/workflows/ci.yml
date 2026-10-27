@@ -37,12 +37,36 @@ jobs:
 
       - name: Offline tests (no API key required)
         run: >-
-          python -m pytest -m "not live" -q
+          python -m pytest -m "not live" -q --junitxml=junit.xml
           --cov=analysis_core --cov=ask_muse --cov=app --cov=analyze_experiment
           --cov=data_io --cov=column_inference --cov=cleaning
           --cov=statistics_core --cov=fitting_core --cov=visualization_core
           --cov=domain_modules --cov=result_schema --cov=analyze_dataset
+          --cov=agent_tools --cov=agent_planner --cov=agent_diagnostics
+          --cov=agent_audit --cov=agent_core
           --cov-report=term-missing
+
+      - name: Report failing tests as annotations
+        if: failure()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          path = Path("junit.xml")
+          if not path.exists():
+              print("::error::pytest produced no junit.xml")
+          else:
+              root = ET.parse(path).getroot()
+              failed = 0
+              for case in root.iter("testcase"):
+                  for node in list(case.findall("failure")) + list(case.findall("error")):
+                      failed += 1
+                      name = f"{case.get('classname', '')}::{case.get('name', '')}"
+                      message = (node.get("message") or "").replace("\n", " ")[:400]
+                      print(f"::error::{name}: {message}")
+              print(f"::notice::{failed} failing test case(s) reported")
+          PY
 
       - name: Verify byte-compilation
         run: python -m compileall -q -x "\.venv|\.git" .

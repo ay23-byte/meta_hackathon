@@ -38,6 +38,19 @@ Every file derives from **one** result schema (`result_schema.py`, v2.0):
 The Streamlit apps (`app.py`, `general_app.py`) never write here; downloads are
 generated in memory for each browser session.
 
+### Agent audit artifacts
+
+`python analyze_dataset.py <file.csv> --agent` adds an `agent/` subdirectory:
+
+- `agent/agent_audit.json` - plan source/hash, validation decisions, events,
+  retries, tool results, final conclusion and evidence refs
+- `agent/agent_events.jsonl` - one JSON object per event
+- `agent/agent_report.md` - Markdown report with a Mermaid timeline
+
+`python run_agent_demo.py --case all --strict` writes the same three files per
+case under `outputs/agent_demo/<case>/`. In `general_app.py`, ticking the agent
+consent checkbox includes these files in the downloadable ZIP under `agent/`.
+
 To reproduce the checked-in demo numbers (11 valid rows, slope ≈ 4.99091,
 R² ≈ 0.999803, RMSE ≈ 0.0221565):
 
