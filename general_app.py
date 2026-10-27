@@ -1,0 +1,784 @@
+"""LabLens AI - general-purpose scientific CSV analysis workspace.
+
+Steps A-G: Upload, Validate/Clean, Configure, Explore, Fit, Interpret, Export.
+The bundled voltage-current sample is offered as one example dataset, never
+as the only supported workflow. Column names, units, model, domain layer and
+report sections are all user-controlled.
+
+Run with:  streamlit run general_app.py
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
+
+import ask_muse
+from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
+from column_inference import infer_columns, suggest_roles
+from data_io import DataImportError, read_csv_robust
+from domain_modules import apply_domain, list_domain_modules
+from fitting_core import (
+    MODEL_SPECS,
+    compare_models,
+    fit_model,
+    predict_with_flags,
+    suggest_models,
+)
+from result_schema import ai_context, build_result, export_bundle, markdown_report
+from statistics_core import (
+    correlation,
+    covariance,
+    describe_numeric,
+    descriptive_table,
+    outlier_diagnostics,
+)
+from visualization_core import PLOT_TYPES, build_chart, render_png
+
+ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / ".env")
+SAMPLE = ROOT / "data" / "sample_voltage_current.csv"
+EXAMPLES = sorted((ROOT / "data" / "examples").glob("*.csv")) if (ROOT / "data" / "examples").exists() else []
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_SOURCE_ROWS = 200_000
+MAX_CANDIDATE_VALUES = 50
+MAX_SHORT_TEXT = 300
+MAX_UNIT_TEXT = 24
+MAX_CANDIDATE_TEXT = 2000
+MAX_PLOTS_EXPORTED = 4
+
+st.set_page_config(page_title="LabLens AI · General analysis", page_icon="🔬", layout="wide")
+
+
+# ---------------------------------------------------------------------------
+# Cached, deterministic computations
+# ---------------------------------------------------------------------------
+
+@st.cache_data(show_spinner=False, max_entries=6)
+def load_dataset(raw: bytes, name: str):
+    return read_csv_robust(
+        io.BytesIO(raw), source_name=name,
+        max_bytes=MAX_UPLOAD_BYTES, max_rows=MAX_SOURCE_ROWS,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=6)
+def profile_dataset(raw: bytes, name: str):
+    load = load_dataset(raw, name)
+    return infer_columns(load.frame)
+
+
+@st.cache_data(show_spinner=False, max_entries=6)
+def fit_cached(model: str, x_bytes: bytes, y_bytes: bytes, w_bytes: bytes | None,
+               degree: int, x_label: str, y_label: str):
+    """Fit on arrays passed as bytes so the result is cacheable."""
+    x = np.frombuffer(x_bytes, dtype=float)
+    y = np.frombuffer(y_bytes, dtype=float)
+    weights = np.frombuffer(w_bytes, dtype=float) if w_bytes is not None else None
+    return fit_model(model, x, y, weights, degree=degree, x_label=x_label, y_label=y_label)
+
+
+def unit_text(value, fallback=""):
+    text = "".join(ch for ch in str(value or "") if ch.isalnum() or ch in "_./^-°µΩ ")
+    text = text.strip()[:MAX_UNIT_TEXT]
+    return text or fallback
+
+
+def _hash(payload) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, allow_nan=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _safe_error(exc: Exception) -> str:
+    """Never print a traceback to the UI; never echo an API key."""
+    message = " ".join(str(exc).split())[:MAX_SHORT_TEXT]
+    key = os.getenv("BASETEN_API_KEY", "")
+    if key:
+        message = message.replace(key, "[redacted]")
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+def step_header(letter: str, title: str, caption: str):
+    st.subheader(f"{letter} · {title}")
+    st.caption(caption)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar / provenance
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.title("LabLens AI")
+    st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
+    if os.getenv("BASETEN_API_KEY", "").strip():
+        st.info(f"Muse Spark key configured. Model: {ask_muse.MODEL}")
+    else:
+        st.info("Muse Spark key not configured — deterministic analysis and exports still work.")
+    st.markdown("**Workflow**")
+    for letter, label in (
+        ("A", "Upload"), ("B", "Validate / Clean"), ("C", "Configure"),
+        ("D", "Explore"), ("E", "Fit"), ("F", "Interpret"), ("G", "Export"),
+    ):
+        st.caption(f"{letter} · {label}")
+    st.caption(
+        "Supported input: delimited text/CSV only (.csv, .tsv, .txt). "
+        "Excel, JSON, HDF5 and binary instrument formats are not supported."
+    )
+    st.caption(f"Python {sys.version.split()[0]} · pandas {pd.__version__} · Streamlit {st.__version__}")
+
+st.title("LabLens AI - general scientific data analysis")
+st.caption(
+    "Upload any delimited numeric dataset, choose the columns and model yourself, "
+    "and export a fully reproducible record. Nothing is assumed about your scientific domain."
+)
+
+
+# ---------------------------------------------------------------------------
+# A · Upload
+# ---------------------------------------------------------------------------
+
+step_header("A", "Upload", "Delimiter, encoding, duplicate headers and size are detected before parsing.")
+
+upload_col, example_col = st.columns([3, 2])
+with upload_col:
+    uploaded = st.file_uploader(
+        "Upload a delimited text file", type=["csv", "tsv", "txt"],
+        help=f"Maximum {MAX_UPLOAD_BYTES // 1024 // 1024} MiB and {MAX_SOURCE_ROWS:,} rows.",
+    )
+with example_col:
+    example_name = st.selectbox(
+        "Or load a bundled synthetic example",
+        ["(use upload)" if uploaded else "Original voltage-current sample"]
+        + [path.name for path in EXAMPLES],
+        index=0,
+    )
+
+if uploaded is not None:
+    raw = uploaded.getvalue()
+    source_name = uploaded.name
+else:
+    if example_name == "(use upload)":
+        st.info("Upload a file or choose a bundled example to begin.")
+        st.stop()
+    chosen = SAMPLE if example_name == "Original voltage-current sample" else next(
+        (path for path in EXAMPLES if path.name == example_name), SAMPLE
+    )
+    raw = chosen.read_bytes()
+    source_name = chosen.name
+
+if not raw:
+    st.error("The selected file is empty.")
+    st.stop()
+if len(raw) > MAX_UPLOAD_BYTES:
+    st.error(f"{source_name} exceeds the {MAX_UPLOAD_BYTES:,}-byte limit. Upload a smaller CSV.")
+    st.stop()
+
+try:
+    load = load_dataset(raw, source_name)
+except (DataImportError, ValueError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+    st.error(f"Could not import {source_name}: {_safe_error(exc)}")
+    st.stop()
+except Exception as exc:
+    st.error(f"Could not import {source_name}: {_safe_error(exc)}")
+    st.stop()
+
+frame = load.frame
+if frame.empty or len(frame.columns) == 0:
+    st.error("The dataset has no usable rows or columns. Upload a CSV with a header and at least one row.")
+    st.stop()
+if len(frame) > MAX_SOURCE_ROWS:
+    st.error(f"The dataset exceeds the {MAX_SOURCE_ROWS:,}-row limit. Downsample before uploading.")
+    st.stop()
+
+st.caption(
+    f"`{source_name}` · {len(frame):,} rows · {len(frame.columns)} columns · "
+    f"delimiter `{load.delimiter!r}` · encoding `{load.encoding}` · "
+    f"SHA-256 `{load.sha256[:16]}…`"
+)
+for warning in load.warnings:
+    st.warning(warning)
+st.dataframe(frame.head(8), width="stretch", hide_index=True)
+
+profiles = profile_dataset(raw, source_name)
+suggestion = suggest_roles(profiles)
+all_columns = [str(column) for column in frame.columns]
+
+
+# ---------------------------------------------------------------------------
+# B · Validate / Clean
+# ---------------------------------------------------------------------------
+
+step_header("B", "Validate / Clean", "Column types are inferred from data shape. Missing, invalid and non-finite values are counted separately.")
+
+profile_rows = [
+    {
+        "Column": p.name, "Kind": p.kind, "Rows": p.n_total,
+        "Valid numeric": p.n_valid, "Missing": p.n_missing,
+        "Invalid": p.n_invalid, "Non-finite": p.n_nonfinite,
+        "Distinct": p.n_unique, "Why": "; ".join(p.reasons)[:160],
+    }
+    for p in profiles
+]
+st.dataframe(pd.DataFrame(profile_rows), width="stretch", hide_index=True)
+if suggestion.notes:
+    st.info(" · ".join(suggestion.notes))
+
+with st.expander("Cleaning options and preview", expanded=True):
+    inferred_numeric = [p.name for p in profiles if p.is_numeric]
+    numeric_override = st.multiselect(
+        "Columns to treat as numeric", options=all_columns,
+        default=inferred_numeric,
+        help="Add a mixed column here if it contains measurements with a few typos.",
+    )
+    remove_duplicates = st.checkbox("Remove exact duplicate rows", value=False)
+    consent = st.checkbox(
+        "I have reviewed the preview — apply these cleaning choices to the analysis", value=True,
+        help="Unchecking this keeps duplicate rows and disables invalid-pair exclusion; "
+             "a numeric fit still cannot use non-finite values.",
+    )
+    effective_duplicates = remove_duplicates and consent
+    plan = build_plan(
+        profiles, remove_duplicates=effective_duplicates,
+        exclude_invalid_pairs=consent, extra_numeric=tuple(numeric_override),
+    )
+    report = preview_cleaning(frame, plan)
+    st.dataframe(pd.DataFrame(report.as_dict()["columns"]), width="stretch", hide_index=True)
+    st.caption(
+        f"Rows in: {report.n_rows_in:,} · rows out: {report.n_rows_out:,} · "
+        f"duplicates removed: {report.n_duplicates_removed:,} · "
+        f"cells coerced to numeric: {report.n_cells_changed:,}"
+    )
+    for note in report.notes:
+        st.caption(f"• {note}")
+    if not consent:
+        st.warning(
+            "Cleaning consent is off: duplicate rows are retained and no rows are excluded "
+            "by this step. Numeric fitting still ignores non-finite values by necessity."
+        )
+
+
+# ---------------------------------------------------------------------------
+# C · Configure
+# ---------------------------------------------------------------------------
+
+step_header("C", "Configure", "Role hints are suggestions only; your choices determine the analysis.")
+
+role_col, model_col, unit_col = st.columns(3)
+with role_col:
+    def choose(label, options, default, *, allow_none=True):
+        values = (["(none)"] if allow_none else []) + [str(item) for item in options]
+        wanted = str(default) if default in values else ("(none)" if allow_none else values[0])
+        chosen = st.selectbox(label, values, index=values.index(wanted))
+        return None if chosen == "(none)" else chosen
+
+    x_col = choose("X column (independent)", all_columns, suggestion.x or all_columns[0], allow_none=False)
+    y_options = [column for column in numeric_override if column != x_col]
+    y_col = choose("Y column (dependent)", y_options, suggestion.y, allow_none=False)
+    group_col = choose("Group / category column", all_columns, suggestion.group)
+    time_col = choose("Time column", all_columns, suggestion.time)
+    uncertainty_col = choose("Uncertainty column (1 sigma)", all_columns, suggestion.uncertainty)
+    secondary_y = st.multiselect(
+        "Secondary Y columns (plotted separately)",
+        [column for column in numeric_override if column not in (x_col, y_col)],
+        default=[],
+    )
+with model_col:
+    model_name = st.selectbox("Model", list(MODEL_SPECS), format_func=lambda key: MODEL_SPECS[key]["label"])
+    degree = st.slider("Polynomial degree", 1, 6, 2) if model_name == "polynomial" else 2
+    domain_id = st.selectbox(
+        "Domain interpretation layer", [module["id"] for module in list_domain_modules()],
+        format_func=lambda key: next(m["label"] for m in list_domain_modules() if m["id"] == key),
+    )
+    correlation_method = st.selectbox("Correlation method", ["pearson", "spearman"])
+    plot_type = st.selectbox("Primary chart", list(PLOT_TYPES), format_func=lambda key: PLOT_TYPES[key])
+    bins = st.slider("Histogram bins", 5, 100, 30)
+with unit_col:
+    default_x_unit = "A" if "current" in str(x_col).casefold() else ""
+    default_y_unit = "V" if "voltage" in str(y_col).casefold() else ""
+    unit_x = unit_text(st.text_input("X unit (optional)", value=default_x_unit, max_chars=MAX_UNIT_TEXT))
+    unit_y = unit_text(st.text_input("Y unit (optional)", value=default_y_unit, max_chars=MAX_UNIT_TEXT))
+    unit_time = unit_text(st.text_input("Time unit (optional)", value="", max_chars=MAX_UNIT_TEXT))
+    question = st.text_input("Scientific question", value="How does Y vary with X?", max_chars=MAX_SHORT_TEXT)[:MAX_SHORT_TEXT]
+    candidate_text = st.text_input(
+        "Candidate current values" if source_name == SAMPLE.name else f"Candidate {x_col} values",
+        value="", max_chars=MAX_CANDIDATE_TEXT,
+        help="Comma-separated numeric X values for model-based predictions.",
+    )
+
+st.caption(
+    f"Selected model: {MODEL_SPECS[model_name]['label']} — {MODEL_SPECS[model_name]['assumptions']}"
+)
+domain_meta = next(module for module in list_domain_modules() if module["id"] == domain_id)
+with st.expander("Domain assumptions (read before interpreting)"):
+    st.write(domain_meta["description"])
+    for assumption in domain_meta["assumptions"]:
+        st.caption(f"• {assumption}")
+if secondary_y:
+    st.warning(
+        "Secondary Y columns are exported as separate charts, not overlaid on a second axis: "
+        "dual axes can imply relationships that depend only on scale choices."
+    )
+
+section_options = list(ask_muse.SECTION_REGISTRY)
+selected_sections = st.multiselect(
+    "AI report sections (optional)", section_options,
+    default=list(ask_muse.REQUIRED_TITLES),
+    help="A maximum of ten registered sections is allowed. Unknown or duplicate names are rejected.",
+)
+if not selected_sections:
+    st.info("No AI sections selected; the default eight will be used if you request a report.")
+
+
+# ---------------------------------------------------------------------------
+# Deterministic pipeline (no Streamlit calls inside)
+# ---------------------------------------------------------------------------
+
+try:
+    final_plan = build_plan(
+        profiles,
+        remove_duplicates=effective_duplicates,
+        exclude_invalid_pairs=consent,
+        x=x_col, y=y_col,
+        extra_numeric=tuple(dict.fromkeys([*numeric_override, x_col or "", y_col or "",
+                                           uncertainty_col or ""])),
+    )
+    cleaning_result = apply_cleaning(frame, final_plan)
+    working = cleaning_result.working
+    x_values, y_values, source_rows = paired_values(cleaning_result, x_col, y_col)
+except (ValueError, KeyError, TypeError) as exc:
+    st.error(f"Configuration error: {_safe_error(exc)}")
+    st.stop()
+except Exception as exc:
+    st.error(f"Could not prepare the analysis: {_safe_error(exc)}")
+    st.stop()
+
+if x_col == y_col:
+    st.error("Choose different columns for X and Y.")
+    st.stop()
+if len(x_values) < 2:
+    st.error(
+        f"At least two complete finite rows are required for the selected X/Y pair "
+        f"({len(x_values)} available). Check the cleaning preview and column roles."
+    )
+    st.stop()
+
+# Weighting: only when a user-selected uncertainty column exists.
+uncertainty_values = None
+if uncertainty_col and uncertainty_col in working.columns:
+    candidate_unc = np.asarray(
+        pd.to_numeric(working[uncertainty_col], errors="coerce"), dtype=float
+    )
+    usable = cleaning_result.usable_pairs(x_col, y_col)
+    if len(candidate_unc) == len(usable):
+        aligned = candidate_unc[usable]
+        if np.all(np.isfinite(aligned)) and np.all(aligned > 0) and len(aligned) == len(x_values):
+            uncertainty_values = aligned
+        else:
+            st.warning(
+                "The selected uncertainty column contains non-positive or non-finite values "
+                "in fitted rows, so it is NOT used as weights. No uncertainties were invented."
+            )
+
+# Fit the chosen model plus a bounded comparison set.
+x_label = f"{x_col}" + (f" ({unit_x})" if unit_x else "")
+y_label = f"{y_col}" + (f" ({unit_y})" if unit_y else "")
+try:
+    x_bytes = np.ascontiguousarray(x_values, dtype=float).tobytes()
+    y_bytes = np.ascontiguousarray(y_values, dtype=float).tobytes()
+    # The selected column is a 1-sigma uncertainty; fitting_core expects
+    # inverse-variance weights w = 1/sigma**2.
+    w_bytes = (np.ascontiguousarray(1.0 / uncertainty_values**2, dtype=float).tobytes()
+               if uncertainty_values is not None else None)
+    fit = fit_cached(model_name, x_bytes, y_bytes, w_bytes, degree, x_label, y_label)
+except Exception as exc:
+    st.error(f"The fit could not be computed: {_safe_error(exc)}")
+    st.stop()
+
+comparison_results = []
+candidate_models = ["linear", "polynomial", "exponential", "logarithmic", "power"]
+if len(x_values) > 5000:
+    candidate_models = ["linear", "polynomial"]
+for candidate in candidate_models:
+    if candidate == model_name:
+        comparison_results.append(fit)
+        continue
+    try:
+        comparison_results.append(
+            fit_cached(candidate, x_bytes, y_bytes, w_bytes, degree, x_label, y_label)
+        )
+    except Exception:
+        pass
+
+try:
+    model_table = compare_models(comparison_results)
+    suggestions = suggest_models(x_values, y_values)
+
+    stats_columns = list(dict.fromkeys(
+        [column for column in numeric_override if column] + [x_col, y_col]
+        + ([uncertainty_col] if uncertainty_col else [])
+    ))
+    stats_columns = [column for column in stats_columns if column in working.columns]
+    stats = {
+        column: describe_numeric(working[column])
+        for column in stats_columns
+    }
+    stats_table = descriptive_table(working, stats_columns)
+    corr_result = correlation(x_values, y_values, method=correlation_method)
+    cov_result = covariance(x_values, y_values)
+    outliers = outlier_diagnostics(y_values)
+
+    domain = apply_domain(domain_id, fit, {
+        "x": x_col, "y": y_col, "x_label": x_label, "y_label": y_label,
+        "unit_x": unit_x, "unit_y": unit_y, "unit_time": unit_time,
+    })
+
+    chart_config = {
+        "x": x_col, "y": y_col, "group": group_col, "time": time_col,
+        "uncertainty": uncertainty_col, "secondary_y": secondary_y,
+        "bins": bins, "fit_result": fit, "numeric_columns": numeric_override,
+        "correlation_method": correlation_method,
+    }
+    # Use companion numeric columns where available so arbitrary headers work.
+    chart_frame = working.copy()
+    for column in stats_columns:
+        companion = f"__numeric__{column}"
+        if companion in chart_frame.columns:
+            chart_frame[column] = chart_frame[companion]
+    chart_spec = build_chart(plot_type, chart_frame, chart_config)
+except Exception as exc:
+    st.error(f"Could not compute statistics or charts: {_safe_error(exc)}")
+    st.stop()
+
+export_chart_types = [plot_type]
+for extra in ("scatter", "histogram", "residuals", "distribution", "correlation_heatmap"):
+    if extra != plot_type and len(export_chart_types) < MAX_PLOTS_EXPORTED:
+        export_chart_types.append(extra)
+
+chart_summaries = []
+chart_files: dict[str, bytes] = {}
+for chart_name in export_chart_types:
+    try:
+        built = chart_spec if chart_name == plot_type else build_chart(chart_name, chart_frame, chart_config)
+        slug = chart_name.replace(" ", "_")
+        if built.valid:
+            chart_files[f"plots/{slug}.html"] = built.to_html().encode("utf-8")
+            chart_files[f"plots/{slug}.png"] = render_png(chart_name, chart_frame, chart_config)
+        chart_summaries.append({
+            "plot_type": chart_name, "label": built.label, "n_rows": built.n_rows,
+            "file": f"plots/{slug}.png" if built.valid else None,
+            "warnings": built.warnings, "notes": built.notes,
+            "reason": built.reason if not built.valid else None,
+        })
+    except Exception as exc:
+        chart_summaries.append({"plot_type": chart_name, "label": chart_name,
+                                "n_rows": 0, "file": None,
+                                "warnings": [_safe_error(exc)], "notes": [], "reason": _safe_error(exc)})
+
+cleaning_dict = cleaning_result.report.as_dict()
+cleaning_dict["warnings"] = ([
+    "Rows with invalid or missing X/Y are excluded from fitting but remain in the cleaned CSV."
+] if cleaning_dict.get("invalid_pair_rows_excluded") else [])
+source_info = {
+    "name": source_name, "sha256": load.sha256, "rows": len(frame),
+    "columns": all_columns, "delimiter": load.delimiter,
+    "encoding": load.encoding, "warnings": list(load.warnings),
+    "duplicate_headers": list(load.duplicate_headers),
+}
+roles = {
+    "x": x_col, "y": y_col, "group": group_col, "time": time_col,
+    "uncertainty": uncertainty_col, "secondary_y": list(secondary_y),
+    "unit_x": unit_x, "unit_y": unit_y, "unit_time": unit_time,
+    "question": question, "model": model_name, "degree": degree,
+    "domain": domain_id, "correlation_method": correlation_method,
+}
+try:
+    result = build_result(
+        source=source_info, roles=roles, cleaning=cleaning_dict, statistics=stats,
+        correlation=corr_result, outliers=outliers, fit=fit,
+        model_comparison=model_table, model_suggestions=suggestions,
+        domain=domain, chart_summaries=chart_summaries,
+        notes=[
+            "Cleaned CSV keeps the original columns and adds __numeric__ companion columns.",
+            f"Weighted fitting was {'enabled' if uncertainty_values is not None else 'not enabled'}.",
+            "Interactive HTML plots load Vega-Lite from a CDN; PNG plots are rendered locally.",
+        ],
+    )
+    context = ai_context(result)
+    context_hash = _hash({
+        "result": {key: result[key] for key in (
+            "source", "roles", "cleaning", "statistics", "correlation", "outliers",
+            "fit", "model_comparison", "domain", "warnings",
+        )},
+        "sections": list(selected_sections or ask_muse.REQUIRED_TITLES),
+        "question": question,
+        "model": ask_muse.MODEL,
+    })
+except Exception as exc:
+    st.error(f"Could not assemble the result record: {_safe_error(exc)}")
+    st.stop()
+ai_state = st.session_state.get("ai_state")
+if isinstance(ai_state, dict) and ai_state.get("hash") != context_hash:
+    st.session_state.pop("ai_state", None)
+    ai_state = None
+if ai_state and ai_state.get("hash") == context_hash:
+    result["ai"] = ai_state.get("wrapper")
+
+
+# ---------------------------------------------------------------------------
+# D · Explore
+# ---------------------------------------------------------------------------
+
+step_header("D", "Explore", "Descriptive statistics, association, outlier diagnostics and charts from your chosen columns.")
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Rows uploaded", f"{len(frame):,}")
+m2.metric("Complete X/Y pairs", f"{len(x_values):,}")
+m3.metric("Rows excluded from fit", f"{cleaning_dict.get('invalid_pair_rows_excluded', 0):,}")
+m4.metric("Numeric columns", f"{len(numeric_override):,}")
+
+with st.expander("Descriptive statistics", expanded=True):
+    st.dataframe(stats_table, width="stretch", hide_index=True)
+    st.caption(
+        "Sample SD uses ddof=1. The 95% t interval describes uncertainty of the mean under "
+        "independent, approximately normal observations — not instrument accuracy."
+    )
+assoc_col, outlier_col = st.columns(2)
+with assoc_col:
+    st.write("**Association**")
+    if corr_result.get("valid"):
+        st.write(f"{corr_result['method'].capitalize()} r = {corr_result['coefficient']:.6g} "
+                 f"(n = {corr_result['n_valid']}, p = {corr_result['p_value']:.4g})")
+        st.caption(corr_result.get("caveat", ""))
+    else:
+        st.caption(corr_result.get("reason", "Correlation unavailable."))
+    if cov_result.get("valid"):
+        st.caption(f"Sample covariance (ddof={cov_result['ddof']}) = {cov_result['value']:.6g}")
+with outlier_col:
+    st.write("**Outlier diagnostics (IQR fences)**")
+    if outliers.get("valid"):
+        st.write(f"Flagged {outliers['n_low']} low and {outliers['n_high']} high of "
+                 f"{outliers['n_valid']} finite Y values.")
+        st.caption(outliers.get("caveat", ""))
+    else:
+        st.caption(outliers.get("reason", "Not enough observations."))
+
+st.write(f"**{chart_spec.label}**")
+if chart_spec.valid:
+    try:
+        st.altair_chart(chart_spec.chart, width="stretch")
+    except Exception as exc:
+        st.error(f"Could not render the interactive chart: {_safe_error(exc)}")
+        try:
+            st.image(render_png(plot_type, chart_frame, chart_config),
+                     caption="Local PNG fallback", width="stretch")
+        except Exception as fallback_exc:
+            st.info(f"PNG fallback also failed: {_safe_error(fallback_exc)}")
+else:
+    st.info(chart_spec.reason)
+for warning in chart_spec.warnings:
+    st.warning(warning)
+for note in chart_spec.notes:
+    st.caption(f"• {note}")
+
+with st.expander("Model suggestions (shape heuristics only)"):
+    st.dataframe(pd.DataFrame(suggestions), width="stretch", hide_index=True)
+    st.caption(
+        "Suggestions rank linearised correlations; they are not model selection, "
+        "not proof of a mechanism, and not evidence of causation."
+    )
+
+
+# ---------------------------------------------------------------------------
+# E · Fit
+# ---------------------------------------------------------------------------
+
+step_header("E", "Fit", "The model is fitted only when you choose one; failures are reported instead of hidden.")
+
+is_sample = source_name == SAMPLE.name and model_name == "linear"
+slope_label = "Slope (ΔV / ΔI)" if is_sample else f"Slope (Δ{unit_y or 'Y'} / Δ{unit_x or 'X'})"
+r2_value = (fit.metrics or {}).get("r2")
+f1, f2, f3 = st.columns(3)
+f1.metric("Valid measurements", str(fit.n_observations))
+f2.metric(slope_label, f"{fit.parameters.get('slope', float('nan')):.5f}"
+          if fit.success and "slope" in fit.parameters else "—")
+f3.metric("R²", f"{r2_value:.6f}" if isinstance(r2_value, (int, float)) else "Undefined")
+
+if not fit.success:
+    st.error(f"Fit failed: {fit.reason}")
+else:
+    st.code(fit.equation, language="text")
+    st.caption(fit.assumptions)
+    param_table = pd.DataFrame([
+        {"parameter": name, "value": value,
+         "std_error": (fit.parameter_errors or {}).get(name)}
+        for name, value in fit.parameters.items()
+    ])
+    left, right = st.columns(2)
+    with left:
+        st.write("**Parameters**")
+        st.dataframe(param_table, width="stretch", hide_index=True)
+    with right:
+        st.write("**Fit metrics**")
+        st.dataframe(pd.DataFrame([
+            {"metric": key, "value": value}
+            for key, value in (fit.metrics or {}).items()
+        ]), width="stretch", hide_index=True)
+    for warning in fit.warnings:
+        st.warning(warning)
+    if fit.x_range:
+        st.caption(f"Fitted X range: {fit.x_range[0]:.6g} … {fit.x_range[1]:.6g}. "
+                   "Predictions outside it are extrapolations.")
+    if uncertainty_values is None:
+        st.caption("Unweighted fit (ordinary least squares). No uncertainty column was applied, "
+                   "so parameter errors come from residual scatter and are not calibrated.")
+
+with st.expander("Compare candidate models"):
+    st.dataframe(pd.DataFrame(model_table), width="stretch", hide_index=True)
+    st.caption("AIC comparisons are valid only for fits on the same observations and the same weighting.")
+
+st.write("**Follow-up predictions**")
+values = [item.strip() for item in str(candidate_text or "").split(",") if item.strip() != ""]
+if not values:
+    st.info("Enter at least one candidate value above to see a model-based prediction.")
+elif len(values) > MAX_CANDIDATE_VALUES:
+    st.info(f"Only the first {MAX_CANDIDATE_VALUES} candidate values are used.")
+    values = values[:MAX_CANDIDATE_VALUES]
+
+if values:
+    parsed: list[float] = []
+    bad_token = False
+    parse_failed = False
+    for token in values:
+        try:
+            number = float(token)
+        except (TypeError, ValueError):
+            parse_failed = True
+            break
+        if not np.isfinite(number):
+            st.error("NaN and infinity are not allowed in candidate values.")
+            bad_token = True
+            break
+        parsed.append(number)
+    if parse_failed:
+        st.error("Enter finite numeric values separated by commas.")
+    if not bad_token and not parse_failed and fit.success:
+        prediction = predict_with_flags(fit, np.asarray(parsed, dtype=float))
+        if prediction.get("valid"):
+            rows = [
+                {"candidate_x": x, "predicted_y": y, "range_flag": flag}
+                for x, y, flag in zip(prediction["x"], prediction["predicted"],
+                                      prediction["range_flags"], strict=True)
+            ]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            if all(flag == "in_range" for flag in prediction["range_flags"]):
+                st.info("All proposed points are within the measured range; no extrapolation was used.")
+            else:
+                st.warning("Some proposed points are extrapolated beyond the fitted X range.")
+            st.caption(prediction["caveat"])
+        else:
+            st.info(prediction.get("reason", "Prediction unavailable."))
+
+
+# ---------------------------------------------------------------------------
+# F · Interpret (optional AI)
+# ---------------------------------------------------------------------------
+
+step_header("F", "Interpret", "Muse Spark is optional. AI text is generated only from the computed results above.")
+
+if st.button("Generate evidence-grounded interpretation", type="primary"):
+    if not os.getenv("BASETEN_API_KEY", "").strip():
+        st.warning("BASETEN_API_KEY is not set; AI interpretation is unavailable. "
+                   "All deterministic results and exports remain available.")
+    else:
+        try:
+            titles = list(selected_sections) if selected_sections else list(ask_muse.REQUIRED_TITLES)
+            wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
+        except (ValueError, RuntimeError) as exc:
+            st.error(f"Muse Spark request failed: {_safe_error(exc)}")
+        except Exception as exc:
+            st.error(f"Muse Spark request failed: {_safe_error(exc)}")
+        else:
+            structured = ask_muse.validate_report(wrapper.get("structured"), titles)
+            if structured is None:
+                st.error("Muse Spark returned an incomplete report; it was rejected and nothing was stored.")
+            else:
+                wrapper["structured"] = structured
+                st.session_state["ai_state"] = {"hash": context_hash, "wrapper": wrapper}
+                result["ai"] = wrapper
+                st.rerun()
+
+if result.get("ai"):
+    wrapper = result["ai"]
+    st.markdown("### Muse Spark report (AI-generated, unverified)")
+    st.caption(f"Provider model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
+    for section in wrapper["structured"]["sections"]:
+        st.markdown(f"**{section['title']}**")
+        st.text(section["content"])
+    if wrapper["structured"].get("claims"):
+        st.markdown("**Evidence-linked claims**")
+        for index, claim in enumerate(wrapper["structured"]["claims"], start=1):
+            st.markdown(f"**Claim {index}** ({claim['evidence_type']}): {claim['claim']}")
+            st.caption(f"Evidence: {claim['evidence']} · Limitation: {claim['limitation']} · "
+                       f"Verification: {claim['proposed_verification']}")
+    st.info("This report was generated from the deterministic context only. "
+            "Verify every quantitative statement against sections D and E.")
+else:
+    st.caption("No AI report has been generated. The app works fully without an API key.")
+
+
+# ---------------------------------------------------------------------------
+# G · Export
+# ---------------------------------------------------------------------------
+
+step_header("G", "Export", "Every artifact is derived from the single result schema for the current configuration.")
+
+try:
+    exports = export_bundle(
+        result, cleaned_frame=working, descriptive_table=stats_table, charts=chart_files,
+    )
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in exports.items():
+            archive.writestr(name, payload)
+    zip_payload = zip_buffer.getvalue()
+except Exception as exc:
+    st.error(f"Could not build exports: {_safe_error(exc)}")
+    st.stop()
+
+d1, d2, d3 = st.columns(3)
+d1.download_button("Download cleaned data (CSV)", exports["cleaned_data.csv"],
+                   file_name="cleaned_data.csv", mime="text/csv", width="stretch")
+d2.download_button("Download results (JSON)", exports["results.json"],
+                   file_name="results.json", mime="application/json", width="stretch")
+d3.download_button("Download full bundle (ZIP)", zip_payload,
+                   file_name="lablens_bundle.zip", mime="application/zip", width="stretch")
+
+st.caption(
+    "The ZIP contains: " + ", ".join(sorted(exports)) + ". "
+    "The Markdown report includes computed results, limitations, and (only if generated) "
+    "clearly labelled AI hypotheses."
+)
+with st.expander("Preview Markdown report"):
+    try:
+        st.code(markdown_report(result)[:12_000], language="markdown")
+    except Exception as exc:
+        st.error(f"Could not render the report preview: {_safe_error(exc)}")
+
+st.divider()
+st.caption(
+    "Built with Muse Spark Open (optional AI). Deterministic analysis is entirely local. "
+    "LabLens supports delimited text/CSV analysis only — not universal file formats or all "
+    "scientific analyses. Always verify assumptions, units and provenance before drawing conclusions."
+)

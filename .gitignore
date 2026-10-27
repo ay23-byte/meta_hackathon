@@ -22,4 +22,10 @@ outputs/
 # CLI-generated example artifacts (see results/README.md)
 results/*.png
 results/*.csv
+results/*.json
+results/*.md
+results/*.html
 results/analysis_results.json
+results/general/
+results/plots/
+outputs/

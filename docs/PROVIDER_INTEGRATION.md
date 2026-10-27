@@ -118,3 +118,27 @@ python -m streamlit run app.py
 If the live structured-report test fails, the app still works: calculations,
 plots, and all three exports remain available. Say so explicitly rather
 than presenting a saved or mocked report as a live result.
+
+## General platform additions (27 Oct 2026)
+
+- `ask_muse.REQUIRED_TITLES` is still the eight-title default. A
+  `SECTION_REGISTRY` of ten titles plus `resolve_section_titles()` allows the
+  UI/CLI to request a different subset. `build_prompt`, `validate_report` and
+  `generate_interpretation` accept an optional `section_titles` argument;
+  unknown, duplicate, empty or oversized requests are rejected locally before
+  any credential check or network call.
+- `result_schema.ai_context()` builds the provider context from the single
+  result object. It excludes raw data rows, free-form notes and all prior AI
+  text, trims verbose blocks progressively, and guarantees a size bound. A
+  stubbed-provider test asserts the context contains the fitted slope.
+- `general_app.py` binds the AI report to a hash of the deterministic result
+  plus the section list, question and provider model; changing any of them
+  invalidates the cached report.
+- New tests: `tests/test_ask_muse_sections.py`,
+  `tests/test_general_app.py` (AI paths),
+  `tests/test_result_schema.py` (context grounding), and
+  `tests/test_analyze_dataset.py` (optional AI without a key).
+
+The live endpoint is still unverified in this environment: no
+`BASETEN_API_KEY` was configured, so the two `live` tests remain skipped and
+all provider tests use a fake client.

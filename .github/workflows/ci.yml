@@ -39,7 +39,10 @@ jobs:
         run: >-
           python -m pytest -m "not live" -q
           --cov=analysis_core --cov=ask_muse --cov=app --cov=analyze_experiment
+          --cov=data_io --cov=column_inference --cov=cleaning
+          --cov=statistics_core --cov=fitting_core --cov=visualization_core
+          --cov=domain_modules --cov=result_schema --cov=analyze_dataset
           --cov-report=term-missing
 
       - name: Verify byte-compilation
-        run: python -m compileall -q app.py analysis_core.py ask_muse.py analyze_experiment.py
+        run: python -m compileall -q -x "\.venv|\.git" .

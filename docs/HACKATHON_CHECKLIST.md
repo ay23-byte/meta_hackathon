@@ -81,7 +81,7 @@ Only items verified in this environment are checked. See
 
 ## Quality gates (measured 26 Oct 2026)
 
-- [x] 112 passed, 2 skipped offline (skips = live tests)
+- [x] 229 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
 - [x] 98% statement coverage across the four application modules
 - [x] `ruff check .` clean
 - [x] All Python modules byte-compile
@@ -121,9 +121,18 @@ Only items verified in this environment are checked. See
    Offline fake-client tests verify our side of the contract, not the
    provider's availability or the model's reliability in producing the
    strict JSON schema.
-2. GitHub Actions matrix has not been executed here.
+2. ~~GitHub Actions matrix has not been executed here.~~ **Resolved 27 Oct
+   2026:** PR #2 ran the full 2x2 matrix (Ubuntu/Windows x Python 3.11/3.12);
+   all four jobs passed, including lint, offline tests with coverage, and
+   byte-compilation.
 3. Demo video has not been recorded.
 4. Eligibility, acceptance, and final submission steps are the
    participant's responsibility.
-5. Scientific scope: straight-line unweighted fit only; no instrument
-   uncertainty, confidence intervals, or provenance verification.
+5. Scientific scope: the original `app.py` is a straight-line unweighted fit.
+   The general platform (`general_app.py` / `analyze_dataset.py`) adds five
+   model families, weighted fitting, Student-t CIs, and broader statistics,
+   but still does not verify instrument calibration, dataset provenance, or
+   causal claims. See `docs/IMPLEMENTATION_REPORT.md` for the full list.
+6. Two Streamlit entry points exist: `general_app.py` (general platform,
+   steps A-G) and the preserved `app.py` (original sample workflow). Decide
+   which to show first in the demo.

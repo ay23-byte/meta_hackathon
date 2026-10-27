@@ -1,5 +1,25 @@
 # LabLens AI architecture
 
+## General platform (added 27 Oct 2026)
+
+The general-purpose path uses `general_app.py` (Streamlit, steps A-G) and
+`analyze_dataset.py` (headless CLI). Its modules are pure and independently
+testable:
+
+```text
+data_io → column_inference → cleaning → (user roles/consent)
+        → statistics_core + fitting_core + domain_modules
+        + visualization_core → result_schema (v2.0)
+        → ai_context → ask_muse (optional) → export_bundle
+```
+
+The legacy path below (`app.py`, `analyze_experiment.py`,
+`analysis_core.py`) is preserved unchanged. Both paths share `ask_muse.py`
+as the single AI provider boundary. See `docs/GENERAL_PLATFORM.md` for the
+full module map, the result schema and the anti-misleading chart rules.
+
+## Original sample workflow
+
 ## Data flow
 
 ```text
