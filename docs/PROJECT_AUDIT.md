@@ -275,3 +275,40 @@ offline suite and lint on both operating systems, not live Muse Spark access.
   formats, no causal inference, no automatic domain detection.
 - `provider_status()` reports configuration, not reachability. A key being set
   is never presented as proof that live AI works.
+
+
+---
+
+# Resolution log — live-demo hardening (27 Oct 2026)
+
+The earlier resolution log on this branch recorded the master-prompt phase
+(348 passed, 2 skipped). This phase fixed a separate, reproducible defect
+class found with a **fake** local `.env`:
+
+| Issue | Fix | Verification |
+| --- | --- | --- |
+| Import-time `load_dotenv` repopulated keys after tests deleted them | `provider_config.py` uses `dotenv_values`, no `os.environ` mutation | 4 UI tests + 2 live tests reproduced before, pass/skip after |
+| Live tests ran on ordinary `pytest` when a key existed | `--run-live` opt-in + skip marker in `tests/conftest.py` | `pytest -m live -q` → 2 skipped, 419 deselected |
+| Duplicate SDK retries / scattered config | SDK `max_retries=0`; one config module | mocked provider tests |
+| 403/timeout error ambiguity | `describe_provider_error()` + timeout-aware `_network_error()` | new hardcoded tests |
+| Duplicate Streamlit AI calls | context-bound report + in-flight flag in both apps | duplicate-click tests for both apps |
+| Unsafe export paths | `safe_archive_name()` in export/CLI/ZIP | path-traversal tests |
+| Non-finite overflow reported as success | structured fit failure; invalid statistics summary | 1e308 synthetic regression |
+| Missing placeholder/extension validation | placeholder key detection; `.csv/.tsv/.txt` check | 18 input-validation tests |
+
+Final measured results:
+
+```text
+ruff check .                    -> All checks passed
+compileall                     -> exit 0
+pytest -q                      -> 419 passed, 2 skipped in 86.06 s
+pytest -q with fake .env       -> 419 passed, 2 skipped
+pytest -m live -q              -> 2 skipped, 419 deselected
+run_agent_demo.py --strict     -> 7/7 OK
+coverage (12 modules)          -> 92% (2,103/2,276 statements)
+HTTP smoke                     -> 200 / 200
+```
+
+Remaining blocker: live Baseten reachability / quota / real response shape is
+**BLOCKED** until a real key and network access are available. No key was
+configured in this sandbox.

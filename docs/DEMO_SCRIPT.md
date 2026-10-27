@@ -107,7 +107,7 @@ versions, and the AI-used flag.
 > with uncertainty and limitations shown explicitly."
 
 End on the residual plot or the exported JSON. Optionally flash the actual
-test summary: 348 passed, 2 skipped — and state that the two skips are live
+test summary: 419 passed, 2 skipped — and state that the two skips are live
 provider tests that could not run without a key.
 
 ## Alternative: general-platform demo (added 27 Oct 2026)
@@ -190,7 +190,7 @@ Use only actual functionality; no fabricated provider response.
 | 1:25-1:55 | Step F: if a key works, generate the scientific live report; otherwise show the labelled OFFLINE MOCK | "Live report = AI hypotheses; mock = deterministic template, NOT AI. Both are validated against computed result IDs." |
 | 1:55-2:20 | Step G + terminal `run_agent_demo.py --case all --strict` | "Seven reproducible cases; D asks for clarification, E survives a simulated provider outage." |
 | 2:20-2:45 | Open `agent_report.md`, `offline_mock_report.md`, `report.md`, `results.json` | "Every decision, retry and computed value has an audit trail; AI text is separate." |
-| 2:45-3:00 | Show actual `pytest -q` result | "348 passed, 2 skipped; the skips require a live key." |
+| 2:45-3:00 | Show actual `pytest -q` result | "419 passed, 2 skipped; the skips require a live key." |
 
 PowerShell equivalents for the terminal shots:
 
@@ -200,3 +200,16 @@ PowerShell equivalents for the terminal shots:
 .\.venv\Scripts\python.exe -B analyze_dataset.py data\sample_voltage_current.csv --x current_A --y voltage_V --output-dir outputs\mock --ai-mock --report-profile scientific --question "What is the slope?"
 .\.venv\Scripts\python.exe -m pytest -q
 ```
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+Use `docs/LIVE_DEMO_GUIDE.md` and `data/demo/linear_calibration_demo.csv` for
+the shortest reproducible demo. The dataset is synthetic: 15 rows, 3 messy
+responses retained in cleaned CSV but excluded from fitting, 12 observations,
+slope 2.5, intercept 0.1, R² 1.0. The offline MOCK is always labelled NOT AI.
+Live tests require `pytest --run-live -m live -v`; an ordinary `pytest -q`
+never contacts Baseten even if a developer `.env` exists. Final measured
+suite: **419 passed, 2 skipped**.

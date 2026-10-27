@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 import ask_muse
+import provider_config
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from data_io import read_csv_robust
 
@@ -233,7 +233,7 @@ def main(argv=None) -> int:
             print(f"{key:12s} {case['title']:32s} -> {case['expected_state']}")
             print(f"             {case['expected_behaviour']}")
         return 0
-    use_ai = bool(args.use_ai and os.getenv("BASETEN_API_KEY", "").strip())
+    use_ai = bool(args.use_ai and provider_config.get_api_key())
     if args.use_ai and not use_ai:
         print("Note: --use-ai requested but BASETEN_API_KEY is unset; using the offline planner.",
               file=sys.stderr)

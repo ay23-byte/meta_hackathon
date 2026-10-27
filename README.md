@@ -161,7 +161,7 @@ Exact PowerShell verification commands (run from the repository root):
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m compileall -q -x '\.venv|\.git' .
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pytest -m live -q
+.\.venv\Scripts\python.exe -m pytest --run-live -m live -q
 .\.venv\Scripts\python.exe -B run_agent_demo.py --case all --strict --output-dir outputs\agent_demo
 .\.venv\Scripts\python.exe -B analyze_dataset.py data\sample_voltage_current.csv --x current_A --y voltage_V --output-dir outputs\sample --ai-mock --report-profile scientific --question "What is the slope?"
 ```
@@ -204,21 +204,29 @@ are computer-generated, **not** experimental evidence.
 ## Quality gates
 
 ```bash
-python -m pytest -q                 # offline suite (live provider tests skip)
-python -m pytest -m live -v         # opt-in, billable live provider tests
+python -m pytest -q                         # offline suite; live tests always skip
+python -m pytest --run-live -m live -v      # explicit opt-in, billable live provider tests
 ruff check .
 python -m compileall -q *.py
 ```
 
+`provider_config.py` reads `.env` with `dotenv_values` without mutating
+`os.environ`; process environment variables always win. Tests set
+`LABLENS_DISABLE_DOTENV=1`, so a developer `.env` can never make an ordinary
+`pytest` run contact Baseten. Obvious placeholder keys are treated as not
+configured. Live tests require both `--run-live` and a usable key.
+
 Measured in this repository on 27 Oct 2026 (Linux, CPython 3.11,
 pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
 
-- **348 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
-  the master-prompt phase added 21 tests on top of the 327-test baseline.
+- **419 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
+  the hardening phase added 71 regression tests on top of the 348-test
+  master-prompt baseline.
 - `ruff check .` clean; `python -m compileall -q *.py` exits 0.
-- **91% statement coverage** of the nine original general-purpose modules plus
-  the general CLI (1,338 of 1,463 statements; per module 87-98%), and **90%**
-  of the six agent modules (806 of 899 statements; per module 83-98%).
+- Final coverage run: **92% (2,103/2,276 statements)** across
+  `provider_config`, `ask_muse`, `result_schema`, `data_io`, fitting/statistics
+  core and the agent modules. Earlier phases measured 91% / 90% on smaller
+  module sets; those are historical, not the final number.
   Seven-case agent demo passes `--strict` with all observed states matching
   expectations (A, B, B', C, C', D, E).
 - Streamlit `AppTest` runs both UI scripts, including different-column uploads,
@@ -245,6 +253,7 @@ implemented, verified offline, and still unverified live.
 1. Copy `.env.example` to `.env` (never commit `.env`).
 2. Add your private key as `BASETEN_API_KEY=...`.
 3. Restart Streamlit.
+4. For live integration tests only, run `python -m pytest --run-live -m live -v`.
 
 The app works without a key: calculations, plots, exports, agent audit trails
 and the explicitly labelled OFFLINE MOCK report remain available; only *live*
@@ -289,6 +298,9 @@ Other limitations:
 ## Documentation
 
 - `docs/PROJECT_AUDIT.md` - measured baseline audit and master-prompt resolution log
+- `docs/HARDENING_REPORT.md` - root-cause analysis of the six historical failures and Phase B-K verification
+- `docs/LIVE_DEMO_GUIDE.md` - exact 2-3 minute demo with PowerShell commands
+- `data/demo/README.md` - synthetic demo dataset and expected computed results
 - `docs/AGENT_WORKFLOW.md` - agent diagram, bounds, A-E demo cases, verification matrix
 - `docs/TOOL_REGISTRY.md` - the closed allowlist and parameter specs
 - `docs/GENERAL_PLATFORM.md` - module map, result schema, design decisions

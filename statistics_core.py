@@ -50,30 +50,68 @@ def describe_numeric(values, *, ddof: int = 1) -> dict:
         result["valid"] = False
         result["reason"] = "At least two finite observations are required for dispersion statistics."
 
-    mean = float(np.mean(clean))
+    with np.errstate(all="ignore"):
+        mean = float(np.mean(clean))
+        variance_sample = (float(np.var(clean, ddof=ddof))
+                           if n_valid - ddof > 0 and n_valid >= 2 else None)
+        std_sample = (float(np.std(clean, ddof=ddof))
+                      if n_valid - ddof > 0 and n_valid >= 2 else None)
+        variance_population = float(np.var(clean, ddof=0))
+        std_population = float(np.std(clean, ddof=0))
+        median = float(np.median(clean))
+        q1 = float(np.percentile(clean, 25))
+        q3 = float(np.percentile(clean, 75))
+        percentiles = {str(pct): float(np.percentile(clean, pct))
+                       for pct in DEFAULT_PERCENTILES}
+    summaries = [mean, variance_population, std_population, median, q1, q3]
+    summaries += [value for value in (variance_sample, std_sample) if value is not None]
+    summaries += list(percentiles.values())
+    if not all(math.isfinite(value) for value in summaries):
+        # Very large (but finite) measurements can overflow mean/variance.
+        # Report the usable order statistics and explicitly omit the rest.
+        result["valid"] = False
+        result["reason"] = ("Non-finite summary statistics; measurements may be too "
+                            "large or too closely spaced for reliable computation.")
+        result.update({
+            "mean": mean if math.isfinite(mean) else None,
+            "median": median if math.isfinite(median) else None,
+            "min": float(np.min(clean)),
+            "max": float(np.max(clean)),
+            "q1": q1 if math.isfinite(q1) else None,
+            "q3": q3 if math.isfinite(q3) else None,
+            "percentiles": {key: (value if math.isfinite(value) else None)
+                            for key, value in percentiles.items()},
+            "iqr": q3 - q1 if math.isfinite(q1) and math.isfinite(q3) else None,
+            "variance_sample": (variance_sample if variance_sample is not None
+                                and math.isfinite(variance_sample) else None),
+            "std_sample": (std_sample if std_sample is not None
+                           and math.isfinite(std_sample) else None),
+            "variance_population": (variance_population
+                                    if math.isfinite(variance_population) else None),
+            "std_population": (std_population
+                               if math.isfinite(std_population) else None),
+        })
+        ci = confidence_interval_mean(clean)
+        result["ci_mean_95"] = ci["interval"]
+        result["ci_mean_method"] = ci["method"]
+        return result
+
     result.update(
         {
             "mean": mean,
-            "median": float(np.median(clean)),
+            "median": median,
             "min": float(np.min(clean)),
             "max": float(np.max(clean)),
-            "q1": float(np.percentile(clean, 25)),
-            "q3": float(np.percentile(clean, 75)),
-            "percentiles": {
-                str(p): float(np.percentile(clean, p)) for p in DEFAULT_PERCENTILES
-            },
+            "q1": q1,
+            "q3": q3,
+            "percentiles": percentiles,
+            "variance_sample": variance_sample,
+            "std_sample": std_sample,
+            "variance_population": variance_population,
+            "std_population": std_population,
         }
     )
-    result["iqr"] = result["q3"] - result["q1"]
-
-    if n_valid - ddof > 0 and n_valid >= 2:
-        result["variance_sample"] = float(np.var(clean, ddof=ddof))
-        result["std_sample"] = float(np.std(clean, ddof=ddof))
-    else:
-        result["variance_sample"] = None
-        result["std_sample"] = None
-    result["variance_population"] = float(np.var(clean, ddof=0))
-    result["std_population"] = float(np.std(clean, ddof=0))
+    result["iqr"] = q3 - q1
 
     ci = confidence_interval_mean(clean)
     result["ci_mean_95"] = ci["interval"]
@@ -91,14 +129,22 @@ def confidence_interval_mean(values, confidence: float = 0.95) -> dict:
             "method": "Not computed: at least two finite observations are required.",
             "assumptions": "Independent, approximately normal observations.",
         }
-    sem = float(stats.sem(clean))
-    if not np.isfinite(sem) or sem == 0:
+    with np.errstate(all="ignore"):
+        sem = float(stats.sem(clean))
+    if not math.isfinite(sem):
+        return {
+            "interval": None,
+            "method": "Not computed: the standard error is non-finite; values may be too large.",
+            "assumptions": "Independent, approximately normal observations.",
+        }
+    if sem == 0:
         return {
             "interval": [float(clean[0]), float(clean[0])],
             "method": "t interval degenerate: all finite values are identical.",
             "assumptions": "Independent, approximately normal observations.",
         }
-    low, high = stats.t.interval(confidence, n - 1, loc=float(np.mean(clean)), scale=sem)
+    with np.errstate(all="ignore"):
+        low, high = stats.t.interval(confidence, n - 1, loc=float(np.mean(clean)), scale=sem)
     return {
         "interval": [float(low), float(high)],
         "method": f"Two-sided {confidence:.0%} Student-t interval, df={n - 1}.",

@@ -145,7 +145,7 @@ configured, whether a local `.env` exists, and that `live_call_attempted` and
 requests use one bounded conservative-shape fallback on HTTP 400 and at most
 `MAX_TRANSIENT_RETRIES` additional attempts for 408/429/5xx or transport
 errors; 4xx configuration errors are never retried. The SDK's own
-`max_retries=1` remains, so the total request count is finite.
+the OpenAI client now uses `max_retries=0`; only the adapter's bounded local retries remain.
 
 The offline mock is a separate code path: `MOCK_MODEL_ID =
 "offline-deterministic-mock"`, `source="offline_mock"`, `is_mock=True`, and a
@@ -161,3 +161,24 @@ prompt, the AI interpretation digest, and the JSON/Markdown audit trail. The
 tool allowlist has 13 entries (see `docs/TOOL_REGISTRY.md`), including model
 comparison, evidence summary and descriptive time-series summary. No
 model-generated source code is executed.
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+`provider_config.py` is now the only configuration boundary: it reads `.env`
+with `dotenv_values` (no `os.environ` mutation), gives process environment
+variables precedence, detects placeholder keys and provides `redact()`.
+`ask_muse.py`, both Streamlit apps, the CLI, the agent core, the planner and the
+demo driver all import it; no module calls `load_dotenv` at import time.
+
+`result_schema.safe_archive_name()` validates every export file name before
+`export_bundle()`, `analyze_dataset.py` and `general_app.py` write files or ZIP
+entries. This blocks absolute paths, drive letters, `..`, backslashes, empty
+components and control characters.
+
+Both Streamlit apps now keep a context-bound validated AI report plus an
+in-flight session flag, so a rerun or repeated button press cannot duplicate a
+provider request. Step F/H captions report `not run`, `running`, `succeeded` or
+`failed`; the bounded agent still requires its own consent checkbox.

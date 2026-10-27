@@ -10,7 +10,7 @@ Only items verified in this environment are checked. See
       server smoke test returning HTTP 200)
 - [x] Sample data loads (bundled `data/sample_voltage_current.csv`, 11 rows)
 - [x] Invalid data is handled transparently (excluded-row counts shown)
-- [x] Scientific calculations are deterministic and tested (348 offline
+- [x] Scientific calculations are deterministic and tested (419 offline
       tests, independent `lstsq` oracle and synthetic known-value datasets)
 - [x] Graphs and metrics match the underlying analysis (CLI artifact test,
       AppTest metric assertions, residual identity)
@@ -87,13 +87,13 @@ Only items verified in this environment are checked. See
 
 ## Quality gates (measured 27 Oct 2026)
 
-- [x] 348 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
+- [x] 419 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
 - [x] 98% statement coverage across the four application modules
 - [x] `ruff check .` clean
 - [x] All Python modules byte-compile
 - [x] Streamlit AppTest covers both UI scripts, upload paths and the mock button
 - [x] `run_agent_demo.py --case all --strict` → 7/7 expected A-E states
-- [x] `pytest -m live -q` → 2 skipped, 348 deselected (no key configured)
+- [x] `pytest -m live -q` → 2 skipped, 419 deselected (no key configured)
 - [x] `pytest -q --cov=ask_muse --cov=result_schema --cov=agent_* --cov=run_agent_demo` → 92% of 1,574 statements
 
 ## Official rules and submission
@@ -162,3 +162,28 @@ Only items verified in this environment are checked. See
 - [x] Five synthetic demo cases, strict mode passing
 - [x] Standard A-G pipeline remains usable with no key
 - [ ] Live Muse Spark plan -> execution round trip (no `BASETEN_API_KEY` here)
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+- [x] Provider config centralized in `provider_config.py`; no import-time
+      `.env` mutation; process env wins; placeholder keys rejected.
+- [x] Live tests require `pytest --run-live -m live -v`; ordinary `pytest -q`
+      skips them even when a developer `.env` exists.
+- [x] Six historical failures reproduced with a fake `.env` and fixed; full
+      suite with fake `.env` → **419 passed, 2 skipped**.
+- [x] Mocked tests cover success, missing/blank/placeholder key, 401/403/429,
+      timeout, network failure, empty/invalid/unexpected response, AI disabled.
+- [x] Duplicate Streamlit AI calls prevented in both apps; agent consent
+      checkbox remains distinct and default-off.
+- [x] Export/ZIP path traversal blocked by `safe_archive_name()`; exports are
+      valid, mutually consistent and secret-free.
+- [x] Scientific overflow regression fixed and documented.
+- [x] Synthetic demo dataset + `docs/LIVE_DEMO_GUIDE.md` added.
+- [ ] Run GitHub Actions on this branch after push and confirm all four matrix
+      jobs (not executed in this sandbox).
+- [ ] Record the demo video and confirm current portal requirements.
+- [ ] **Live Baseten end-to-end verification** remains BLOCKED without a real
+      key; do not claim it passed.

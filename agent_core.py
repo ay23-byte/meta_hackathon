@@ -7,13 +7,13 @@ grounded interpretation -> audit trail. All numbers come from tool outputs.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 
 import pandas as pd
 
 import agent_planner as planner
+import provider_config
 from agent_audit import AgentRun
 from agent_diagnostics import (
     PASS,
@@ -56,7 +56,7 @@ class AnalysisOrchestrator:
     def __init__(self, config: OrchestratorConfig | None = None, **kwargs):
         self.config = config or OrchestratorConfig(**kwargs)
         if self.config.use_ai is None:
-            self.config.use_ai = bool(os.getenv("BASETEN_API_KEY", "").strip())
+            self.config.use_ai = bool(provider_config.get_api_key())
 
     # ------------------------------------------------------------------
     def run(self, load, frame: pd.DataFrame | None = None) -> AgentRun:

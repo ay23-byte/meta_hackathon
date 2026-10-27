@@ -19,6 +19,26 @@ import pandas as pd
 SCHEMA_VERSION = "2.0"
 
 
+def safe_archive_name(name: str) -> str:
+    """Validate one relative archive/output file name.
+
+    Rejects absolute paths, Windows drive letters, parent traversal, empty
+    path components, backslashes and control characters. Used by both the ZIP
+    writer and the CLI file writer so an export name can never escape its
+    destination directory.
+    """
+    if not isinstance(name, str) or not name or name != name.strip():
+        raise ValueError("Export file name must be a non-empty, clean string.")
+    if any(ord(char) < 32 for char in name) or "\\" in name:
+        raise ValueError("Export file name contains unsafe characters.")
+    if name.startswith(("/", "~")):
+        raise ValueError("Export file name must be relative.")
+    parts = name.split("/")
+    if any(part in ("", ".", "..") for part in parts) or ":" in parts[0]:
+        raise ValueError("Export file name contains an unsafe path component.")
+    return name
+
+
 def json_safe(value):
     """Recursively convert to JSON-safe values; non-finite numbers become null."""
     if value is None or isinstance(value, (str, bool)):
@@ -493,5 +513,5 @@ def export_bundle(
         ))
     files["report.md"] = markdown_report(result).encode("utf-8")
     for name, payload in (charts or {}).items():
-        files[name] = payload
-    return files
+        files[safe_archive_name(name)] = payload
+    return {safe_archive_name(name): payload for name, payload in files.items()}

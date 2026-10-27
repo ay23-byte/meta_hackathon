@@ -126,7 +126,7 @@ def test_valid_response_uses_documented_request_and_sanitizes_output(fake_provid
     client = created[0]
     assert client.init_kwargs["base_url"] == "https://inference.baseten.co/v1"
     assert client.init_kwargs["timeout"] == ask_muse.REQUEST_TIMEOUT_SECONDS
-    assert client.init_kwargs["max_retries"] == 1
+    assert client.init_kwargs["max_retries"] == 0  # local bounded retries own the policy
     assert client.init_kwargs["api_key"] == SECRET
 
     request = client.calls[0]

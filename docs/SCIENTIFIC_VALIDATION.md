@@ -167,6 +167,21 @@ datasets are labelled as such and are not experimental evidence.
   exactly `MAX_TRANSIENT_RETRIES + 1 == 3` local attempts, then a safe error;
   HTTP 401 produces one attempt; one 503 followed by a valid report succeeds in
   two attempts.
-- **Full offline suite.** `pytest -q` → **348 passed, 2 skipped**; the two
+- **Full offline suite.** `pytest -q` → **419 passed, 2 skipped**; the two
   skips are the opt-in live Muse Spark tests. `pytest -m live -q` → 2 skipped,
-  348 deselected. No live scientific claim is made.
+  419 deselected. No live scientific claim is made.
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+New regression: finite responses near `1e308` previously produced
+`fit_linear(..., success=True)` with NaN slope/intercept and `describe_numeric`
+with infinite mean/variance. `fit_linear` and `fit_model` now return a
+structured non-finite failure; `describe_numeric` marks the summary invalid,
+omits overflowed dispersion values and keeps finite min/max/quantiles;
+`confidence_interval_mean` returns `interval=None` for a non-finite standard
+error instead of a degenerate interval. Floating-point warnings are suppressed
+locally with `np.errstate`. Known-value and fixed-seed synthetic tests pass.
+Final full offline suite: **419 passed, 2 skipped**.

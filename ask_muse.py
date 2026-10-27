@@ -10,22 +10,18 @@ its result is rendered, stored in the session and written into exports.
 import copy
 import json
 import math
-import os
 import re
 import time
-from pathlib import Path
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
-ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
+import provider_config
 
 # Official Baseten Model API identifier documented by Meta and Baseten.
 # Selected hackathon accounts may be told to use a dated variant; allow an
 # override without changing code. Never put a key in this file.
-MODEL = os.getenv("BASETEN_MODEL", "").strip() or "meta-models/muse-spark-open"
-BASE_URL = "https://inference.baseten.co/v1"
+MODEL = provider_config.get_model()
+BASE_URL = provider_config.BASE_URL
 
 REQUIRED_TITLES = (
     "Executive Summary",
@@ -406,6 +402,59 @@ def validate_report(raw_report, section_titles=None, *,
     return {"sections": clean_sections, "claims": clean_claims}
 
 
+def _provider_error_hint(exc) -> str:
+    """Extract a short, safe provider detail from an exception.
+
+    Only known code/message tokens are used; raw exception text is never
+    returned because it can contain URLs, headers or credentials.
+    """
+    candidates: list[str] = []
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        for key in ("code", "error", "type", "message"):
+            value = body.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+            elif isinstance(value, dict):
+                for inner_key in ("code", "type", "message"):
+                    inner = value.get(inner_key)
+                    if isinstance(inner, str):
+                        candidates.append(inner)
+    message = getattr(exc, "message", None)
+    if isinstance(message, str):
+        candidates.append(message)
+    blob = " ".join(candidates).casefold()
+    hints = (
+        ("invalid_api_key", "The provider rejected the credential itself; check BASETEN_API_KEY."),
+        ("authentication_error", "The provider rejected authentication; check BASETEN_API_KEY."),
+        ("permission_denied", "The account lacks permission for this endpoint or action."),
+        ("model_not_found", "The configured model is not available to this account."),
+        ("model_access", "The account may not have access to the configured model."),
+        ("insufficient_quota", "The account has no remaining quota or credits."),
+        ("rate_limit", "The request was rate limited."),
+        ("timeout", "The provider timed out."),
+    )
+    for token, hint in hints:
+        if token in blob:
+            return hint
+    return ""
+
+
+def describe_provider_error(exc) -> str:
+    """Actionable, secret-free message for one provider exception.
+
+    403 is not automatically an invalid key: when the provider supplies a
+    distinguishable code we say whether it is a credential, permission,
+    model-access or quota problem.
+    """
+    status = _http_status(exc)
+    base = describe_provider_status(status)
+    hint = _provider_error_hint(exc)
+    if status in (401, 403, 404, 429) and hint:
+        return f"{base} Provider detail: {hint}"
+    return base
+
+
 def describe_provider_status(status):
     """Explain common HTTP failures without exposing credentials."""
     messages = {
@@ -475,6 +524,11 @@ def _completion_request(client, prompt, *, json_mode, modern_tokens):
 
 def _network_error(exc):
     # Never display raw exception text: it may contain request headers or URLs.
+    if "timeout" in type(exc).__name__.lower():
+        return RuntimeError(
+            "Muse Spark request timed out. Check network and provider latency, "
+            "then retry later."
+        )
     return RuntimeError(
         f"Could not contact the Muse Spark provider ({type(exc).__name__}). "
         "Check your connection, endpoint, credentials, and model access."
@@ -506,7 +560,7 @@ def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True):
                     time.sleep(TRANSIENT_BACKOFF_SECONDS * (2 ** attempt))
                     continue
                 if status is not None:
-                    raise RuntimeError(describe_provider_status(status)) from None
+                    raise RuntimeError(describe_provider_error(exc)) from None
                 raise _network_error(exc) from None
     raise RuntimeError("Muse Spark request exhausted its bounded retry budget.")
 
@@ -518,28 +572,38 @@ def provider_status() -> dict:
     that the endpoint is reachable, the model is entitled, or a live response
     has ever been validated. Callers must not present this as live verification.
     """
-    configured = bool(os.getenv("BASETEN_API_KEY", "").strip())
-    env_file_present = (ROOT / ".env").is_file()
+    status = provider_config.api_key_status()
+    configured = status["present"]
+    if status["state"] == "placeholder":
+        message = (
+            "BASETEN_API_KEY is not configured: it is an obvious placeholder. "
+            "Replace it in the local .env file (never commit it). Deterministic "
+            "analysis, exports and the labelled offline MOCK remain available."
+        )
+    elif configured:
+        message = (
+            "A key is configured; live Muse Spark has NOT been verified by this "
+            "status check. Generate a report to test reachability and quota."
+        )
+    else:
+        message = (
+            "BASETEN_API_KEY is not configured. Deterministic analysis, exports "
+            "and the explicitly labelled offline MOCK report remain available."
+        )
     return {
         "provider": "Muse Spark Open via Baseten OpenAI-compatible API",
         "base_url": BASE_URL,
         "model": MODEL,
         "api_key_configured": configured,
-        "key_source": "BASETEN_API_KEY (process environment or local .env)"
-                       if configured else "none",
-        "env_file_present": env_file_present,
+        "key_state": status["state"],
+        "key_source": status["source"] if configured else "none",
+        "env_file_present": status["env_file_present"],
         "mode": "live_unverified" if configured else "offline",
         "live_call_attempted": False,
         "live_verified": False,
         "offline_mock_available": True,
         "max_transient_retries": MAX_TRANSIENT_RETRIES,
-        "message": (
-            "A key is configured; live Muse Spark has NOT been verified by this status check. "
-            "Generate a report to test reachability and quota."
-            if configured else
-            "BASETEN_API_KEY is not configured. Deterministic analysis, exports and the "
-            "explicitly labelled offline MOCK report remain available."
-        ),
+        "message": message,
     }
 
 
@@ -676,10 +740,11 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     allowed_ids = _allowed_evidence_ids(result_ids)
     prompt = build_prompt(analysis_context, titles, profile=profile)
 
-    api_key = os.getenv("BASETEN_API_KEY", "").strip()
+    api_key = provider_config.get_api_key()
     if not api_key:
         raise RuntimeError(
-            "BASETEN_API_KEY is missing. Add it to the project's local .env file."
+            "BASETEN_API_KEY is missing, blank, or an obvious placeholder. "
+            "Add a real key to the project's local .env file (never commit it)."
         )
 
     try:
@@ -687,7 +752,7 @@ def generate_interpretation(analysis_context, section_titles=None, *,
             api_key=api_key,
             base_url=BASE_URL,
             timeout=REQUEST_TIMEOUT_SECONDS,
-            max_retries=1,
+            max_retries=0,
         )
     except Exception as exc:
         raise _network_error(exc) from None

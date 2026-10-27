@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from dataclasses import dataclass, field
 
 import ask_muse
+import provider_config
 from agent_tools import MAX_DEGREE, MAX_FALLBACK_MODELS, MAX_STEPS, registry_manifest
 from fitting_core import MODEL_SPECS
 
@@ -108,7 +108,7 @@ def _extract_json(text: str) -> dict:
 def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
                        research_question: str | None = None) -> dict:
     """Ask Muse Spark for a plan. Raises PlannerUnavailable on any failure."""
-    api_key = os.getenv("BASETEN_API_KEY", "").strip()
+    api_key = provider_config.get_api_key()
     if not api_key:
         raise PlannerUnavailable("BASETEN_API_KEY is not configured")
     prompt = build_plan_prompt(quality, manifest, research_question)
@@ -121,7 +121,7 @@ def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
         try:
             client = ask_muse.OpenAI(
                 api_key=api_key, base_url=ask_muse.BASE_URL,
-                timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=1,
+                timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=0,
             )
             response = ask_muse._completion_request(
                 client, prompt, json_mode=True, modern_tokens=True
@@ -315,7 +315,7 @@ def grounding_check(text: str, results: list[dict]) -> dict:
 
 def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
     """Optional Muse Spark report built ONLY from executed tool outputs."""
-    if not os.getenv("BASETEN_API_KEY", "").strip():
+    if not provider_config.get_api_key():
         return None
     context = {
         "note": "Use only these executed tool outputs. Never invent numbers.",
