@@ -312,3 +312,11 @@ HTTP smoke                     -> 200 / 200
 Remaining blocker: live Baseten reachability / quota / real response shape is
 **BLOCKED** until a real key and network access are available. No key was
 configured in this sandbox.
+
+
+## CI verification after hardening
+
+PR #5 ran `.github/workflows/ci.yml`; `gh pr checks 5 --watch` reported all
+four matrix jobs passing (Ubuntu/Windows x Python 3.11/3.12). This verifies
+lint and the offline test suite on both operating systems, not live Muse Spark
+access.

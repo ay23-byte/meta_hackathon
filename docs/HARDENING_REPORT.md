@@ -213,7 +213,7 @@ pytest 9.1.1, ruff 0.17.3.
 | Live Muse Spark reachability / quota / real response | **BLOCKED** | No real `BASETEN_API_KEY` and Baseten is outside this sandbox's allowed hosts. Live tests skip; do not claim verified. |
 | Real AI-proposed plan driving a live agent run | **BLOCKED** | Same credential/network dependency. Offline plan and simulated outage are verified. |
 | Demo video recording | **NOT RUN** | `docs/LIVE_DEMO_GUIDE.md` is ready; recording and portal length/visibility checks are human steps. |
-| CI on this branch | **NOT RUN** | Local lint/tests/compile/app smoke pass; GitHub Actions for this branch should be checked after push. |
+| CI on this branch | **PASS** | PR #5: all four matrix jobs passed (Ubuntu/Windows x Python 3.11/3.12), verified with `gh pr checks 5 --watch`. |
 | Arbitrary scientific formats / causal inference | Out of scope | Documented limitation, not a bug. |
 
 ## 10. Local run steps (Windows PowerShell)

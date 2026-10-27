@@ -182,8 +182,8 @@ Only items verified in this environment are checked. See
       valid, mutually consistent and secret-free.
 - [x] Scientific overflow regression fixed and documented.
 - [x] Synthetic demo dataset + `docs/LIVE_DEMO_GUIDE.md` added.
-- [ ] Run GitHub Actions on this branch after push and confirm all four matrix
-      jobs (not executed in this sandbox).
+- [x] PR #5 CI: all four matrix jobs passed (Ubuntu/Windows x Python
+      3.11/3.12), verified with `gh pr checks 5 --watch`.
 - [ ] Record the demo video and confirm current portal requirements.
 - [ ] **Live Baseten end-to-end verification** remains BLOCKED without a real
       key; do not claim it passed.

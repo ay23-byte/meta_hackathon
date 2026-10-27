@@ -261,3 +261,11 @@ Streamlit HTTP smoke                     -> 200 / 200
 New modules/tests: `provider_config.py`, `tests/conftest.py`, five new test
 files, synthetic demo dataset and `docs/LIVE_DEMO_GUIDE.md`. Live Baseten
 remains unverified without a real key. See `docs/HARDENING_REPORT.md`.
+
+
+## CI verification after hardening
+
+PR #5 ran `.github/workflows/ci.yml`; `gh pr checks 5 --watch` reported all
+four matrix jobs passing (Ubuntu/Windows x Python 3.11/3.12). This verifies
+lint and the offline test suite on both operating systems, not live Muse Spark
+access.

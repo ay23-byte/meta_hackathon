@@ -233,7 +233,9 @@ pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
   role changes, cleaning previews, invalid inputs, AI validation and exports.
 - Local Streamlit HTTP smoke test: `/` and `/_stcore/health` returned 200 for
   `general_app.py` on `0.0.0.0:8503`.
-- GitHub Actions CI on PR #2 and PR #3: all 4 matrix jobs passed on each
+- GitHub Actions CI on PR #5: all 4 matrix jobs passed on this branch
+  (Ubuntu/Windows x Python 3.11/3.12), verified with `gh pr checks 5 --watch`.
+  Earlier PR #2 and PR #3 also passed all 4 matrix jobs on each;
   (Ubuntu/Windows x Python 3.11/3.12). PR #3 initially failed both Windows
   jobs on a ~15 ms `time.monotonic()` resolution assumption in one new test;
   fixed with a platform-independent deadline (`docs/IMPLEMENTATION_REPORT.md`).
