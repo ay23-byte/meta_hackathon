@@ -161,7 +161,9 @@ def test_retry_budget_is_enforced():
 
 
 def test_global_deadline_halts_cleanly():
-    data = run("case_a_linear.csv", max_wall_s=0)
+    # Use a deadline already in the past: time.monotonic() resolution on
+    # Windows is ~15 ms, so max_wall_s=0 can be flaky there.
+    data = run("case_a_linear.csv", max_wall_s=-1)
     assert data["final"]["state"] == "FAILED"
     assert data["final"]["conclusion"]
 
