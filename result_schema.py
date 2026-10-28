@@ -131,7 +131,9 @@ def build_result(
 
 
 def results_json(result: dict) -> bytes:
-    return json.dumps(json_safe(result), ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+    # ASCII JSON remains valid UTF-8 and also survives legacy Windows text
+    # readers using a non-UTF-8 default encoding; JSON decoding restores Unicode.
+    return json.dumps(json_safe(result), ensure_ascii=True, indent=2, allow_nan=False).encode("utf-8")
 
 
 def _evidence_slug(value, limit: int = 24) -> str:
