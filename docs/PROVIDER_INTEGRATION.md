@@ -222,7 +222,32 @@ this environment because no `BASETEN_API_KEY` was configured. See
   quota hints. Raw exception text is never returned.
 - **Live tests:** root `test_muse.py` requires `pytest --run-live -m live -v`.
   Without `--run-live`, a usable key, or network reachability, the two tests
-  skip. `pytest -m live -q` → 2 skipped, 419 deselected in this workspace.
-- **Verification:** full offline suite **419 passed, 2 skipped**; same result
+  skip. `pytest -m live -q` → 2 skipped, 426 deselected in this workspace.
+- **Verification:** full offline suite **426 passed, 2 skipped**; same result
   with a fake local `.env` present; `ruff` and `compileall` clean. Live Baseten
   reachability remains **unverified** because no real key is configured here.
+
+
+---
+
+## Report provenance fix (28 Oct 2026)
+
+`general_app.py` previously reused any current-context report, so an OFFLINE
+MOCK blocked the live button. The fix adds explicit provenance helpers in
+`ask_muse.py` and separate live/mock session-state slots in `general_app.py`:
+
+| Field | Live report | Offline mock |
+| --- | --- | --- |
+| `source` | `live_provider` | `offline_mock` |
+| `is_mock` | `False` | `True` |
+| `provider_status` | `live_response_validated` | `not_called` |
+
+`_current_report("live")` never returns a mock; `_current_report("mock")` never
+returns a live response. A failed live request deactivates the visible report
+and shows a redacted, actionable error; it does not fall back to mock output.
+Changing the analysis hash invalidates both stored reports. The legacy `app.py`
+duplicate-request guard also refuses a stored mock while retaining
+backward-compatible reuse of provenance-free live wrappers. Seven new regression
+tests in `tests/test_report_provenance.py` cover these paths. Full offline
+suite: **426 passed, 2 skipped**. Live provider reachability is still
+unverified without a real key.

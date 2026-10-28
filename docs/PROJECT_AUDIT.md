@@ -288,7 +288,7 @@ class found with a **fake** local `.env`:
 | Issue | Fix | Verification |
 | --- | --- | --- |
 | Import-time `load_dotenv` repopulated keys after tests deleted them | `provider_config.py` uses `dotenv_values`, no `os.environ` mutation | 4 UI tests + 2 live tests reproduced before, pass/skip after |
-| Live tests ran on ordinary `pytest` when a key existed | `--run-live` opt-in + skip marker in `tests/conftest.py` | `pytest -m live -q` → 2 skipped, 419 deselected |
+| Live tests ran on ordinary `pytest` when a key existed | `--run-live` opt-in + skip marker in `tests/conftest.py` | `pytest -m live -q` → 2 skipped, 426 deselected |
 | Duplicate SDK retries / scattered config | SDK `max_retries=0`; one config module | mocked provider tests |
 | 403/timeout error ambiguity | `describe_provider_error()` + timeout-aware `_network_error()` | new hardcoded tests |
 | Duplicate Streamlit AI calls | context-bound report + in-flight flag in both apps | duplicate-click tests for both apps |
@@ -301,11 +301,11 @@ Final measured results:
 ```text
 ruff check .                    -> All checks passed
 compileall                     -> exit 0
-pytest -q                      -> 419 passed, 2 skipped in 86.06 s
-pytest -q with fake .env       -> 419 passed, 2 skipped
-pytest -m live -q              -> 2 skipped, 419 deselected
+pytest -q                      -> 426 passed, 2 skipped in 103.66 s
+pytest -q with fake .env       -> 426 passed, 2 skipped
+pytest -m live -q              -> 2 skipped, 426 deselected
 run_agent_demo.py --strict     -> 7/7 OK
-coverage (12 modules)          -> 92% (2,103/2,276 statements)
+coverage (12 modules)          -> 92% (2,130/2,305 statements)
 HTTP smoke                     -> 200 / 200
 ```
 

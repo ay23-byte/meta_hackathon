@@ -182,3 +182,16 @@ Both Streamlit apps now keep a context-bound validated AI report plus an
 in-flight session flag, so a rerun or repeated button press cannot duplicate a
 provider request. Step F/H captions report `not run`, `running`, `succeeded` or
 `failed`; the bounded agent still requires its own consent checkbox.
+
+
+## Report state (provenance fix, 28 Oct 2026)
+
+Step F stores one context-bound state
+`{"hash", "live", "mock", "active"}` in `st.session_state["ai_state"]` and a
+separate `ai_context_hash`. Live and mock wrappers are both preserved for the
+same analysis, but only the active one is displayed and exported. A live action
+reuses only `state["live"]`; the mock action reuses only `state["mock"]`.
+`ask_muse.report_kind()` / `enforce_report_provenance()` are the single source
+of truth for the `source`, `is_mock` and `provider_status` markers. The legacy
+`app.py` has a smaller `stored_live_report()` guard that rejects a stored mock
+but still reuses older wrappers without provenance fields.

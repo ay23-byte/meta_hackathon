@@ -167,9 +167,9 @@ datasets are labelled as such and are not experimental evidence.
   exactly `MAX_TRANSIENT_RETRIES + 1 == 3` local attempts, then a safe error;
   HTTP 401 produces one attempt; one 503 followed by a valid report succeeds in
   two attempts.
-- **Full offline suite.** `pytest -q` → **419 passed, 2 skipped**; the two
+- **Full offline suite.** `pytest -q` → **426 passed, 2 skipped**; the two
   skips are the opt-in live Muse Spark tests. `pytest -m live -q` → 2 skipped,
-  419 deselected. No live scientific claim is made.
+  426 deselected. No live scientific claim is made.
 
 
 ---
@@ -184,4 +184,4 @@ omits overflowed dispersion values and keeps finite min/max/quantiles;
 `confidence_interval_mean` returns `interval=None` for a non-finite standard
 error instead of a degenerate interval. Floating-point warnings are suppressed
 locally with `np.errstate`. Known-value and fixed-seed synthetic tests pass.
-Final full offline suite: **419 passed, 2 skipped**.
+Final full offline suite: **426 passed, 2 skipped**.

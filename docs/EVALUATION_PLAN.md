@@ -136,13 +136,13 @@ or real-model reliability number is claimed.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Full offline suite | `pytest -q` | **419 passed, 2 skipped in 86.06 s** |
-| Same suite with fake `.env` | `pytest -q` | **419 passed, 2 skipped** (no live calls) |
-| Live marker | `pytest -m live -q` | 2 skipped, 419 deselected |
+| Full offline suite | `pytest -q` | **426 passed, 2 skipped in 103.66 s** |
+| Same suite with fake `.env` | `pytest -q` | **426 passed, 2 skipped** (no live calls) |
+| Live marker | `pytest -m live -q` | 2 skipped, 426 deselected |
 | Explicit live opt-in, no key | `pytest --run-live -m live -q` | 2 skipped (clear reason) |
 | Lint / byte-compile | `ruff check .`, `compileall` | clean / exit 0 |
 | A-E agent demo | `run_agent_demo.py --case all --strict` | 7/7 OK |
-| Core-module coverage | `pytest -q --cov=provider_config --cov=ask_muse ...` | 92% (2,103/2,276) |
+| Core-module coverage | `pytest -q --cov=provider_config --cov=ask_muse ...` | 92% (2,130/2,305) |
 | CLI sample / demo dataset | `analyze_dataset.py ...` | 16 files each; slope 4.99091 / 2.5 |
 | Streamlit HTTP smoke | `0.0.0.0:8503` | `/` and `/_stcore/health` 200 |
 

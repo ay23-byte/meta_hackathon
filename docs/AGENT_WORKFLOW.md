@@ -257,5 +257,5 @@ rather than direct `os.getenv` calls, and the planner's OpenAI client uses
 A-E demos and strict plan validation are unchanged and still pass
 `run_agent_demo.py --case all --strict` (7/7). A fake developer `.env` no
 longer changes offline test behaviour: `tests/conftest.py` disables dotenv
-fallback for every non-live test. Final offline suite: **419 passed,
+fallback for every non-live test. Final offline suite: **426 passed,
 2 skipped**; live Muse-proposed planning remains unverified without a key.

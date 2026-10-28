@@ -55,7 +55,7 @@ the Muse Model License.
 - Numerically stable centred OLS; a regression test catches the large-offset
   intercept failure of an uncentred fit.
 - Shared core for dashboard and CLI; headless-safe plotting.
-- 419 offline tests passing, 2 live tests skipped without a key, Streamlit
+- 426 offline tests passing, 2 live tests skipped without a key, Streamlit
   AppTest UI tests, fake-client provider contract tests, CLI/export artifact
   tests, and seven reproducible A-E agent demo cases.
 - Lint-clean (`ruff`), pinned reference environment, and a Linux + Windows

@@ -249,12 +249,12 @@ After the fix:
 ```text
 ruff check .                              -> All checks passed
 compileall                               -> exit 0
-pytest -q                                -> 419 passed, 2 skipped in 86.06 s
-pytest -q with fake .env present          -> 419 passed, 2 skipped
-pytest -m live -q                        -> 2 skipped, 419 deselected
+pytest -q                                -> 426 passed, 2 skipped in 103.66 s
+pytest -q with fake .env present          -> 426 passed, 2 skipped
+pytest -m live -q                        -> 2 skipped, 426 deselected
 pytest --run-live -m live -q (no key)    -> 2 skipped
 run_agent_demo.py --case all --strict    -> 7/7 OK
-coverage (12 core modules)               -> 92% (2,103/2,276)
+coverage (12 core modules)               -> 92% (2,130/2,305)
 Streamlit HTTP smoke                     -> 200 / 200
 ```
 

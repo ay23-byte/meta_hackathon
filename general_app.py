@@ -565,12 +565,20 @@ try:
 except Exception as exc:
     st.error(f"Could not assemble the result record: {_safe_error(exc)}")
     st.stop()
-ai_state = st.session_state.get("ai_state")
-if isinstance(ai_state, dict) and ai_state.get("hash") != context_hash:
+# Track the analysis hash separately: a failed live request may clear the
+# report state, but a later context change must still clear stale errors and
+# in-flight flags. Both live and mock reports are invalidated together.
+stored_ai_hash = st.session_state.get("ai_context_hash")
+if stored_ai_hash != context_hash:
     st.session_state.pop("ai_state", None)
-    ai_state = None
-if ai_state and ai_state.get("hash") == context_hash:
-    result["ai"] = ai_state.get("wrapper")
+    st.session_state.pop("ai_last_error", None)
+    st.session_state.pop("ai_request_in_flight", None)
+    st.session_state["ai_context_hash"] = context_hash
+else:
+    ai_state = st.session_state.get("ai_state")
+    if isinstance(ai_state, dict) and ai_state.get("hash") != context_hash:
+        st.session_state.pop("ai_state", None)
+result["ai"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -739,43 +747,135 @@ st.caption(f"Provider status: {provider['message']} "
            f"mock_available={str(provider['offline_mock_available']).lower()}).")
 
 
-def _current_report():
-    """Return a validated report only when it belongs to the current analysis."""
+def _ai_state():
+    """Return the current analysis' report state, creating an empty one."""
     state = st.session_state.get("ai_state")
     if isinstance(state, dict) and state.get("hash") == context_hash:
-        return state.get("wrapper")
-    return None
+        state.setdefault("live", None)
+        state.setdefault("mock", None)
+        state.setdefault("active", None)
+        return state
+    return {"hash": context_hash, "live": None, "mock": None, "active": None}
 
 
-def store_validated_report(wrapper, titles):
-    """Second, local validation of ANY report (live or mock) before storage."""
+def _save_ai_state(state):
+    state["hash"] = context_hash
+    st.session_state["ai_state"] = state
+
+
+def _set_active_report(kind):
+    state = _ai_state()
+    state["active"] = kind if kind in ("live", "mock") else None
+    _save_ai_state(state)
+    wrapper = state.get(state["active"]) if state["active"] else None
+    result["ai"] = wrapper
+    return wrapper
+
+
+def _current_report(kind=None):
+    """Return a report only when its provenance matches the requested action.
+
+    ``kind=None`` means the currently active report. A live action must not
+    reuse a mock, and a mock action must not reuse a live response.
+    """
+    state = _ai_state()
+    if kind is None:
+        kind = state.get("active")
+        if kind not in ("live", "mock"):
+            return None
+    if kind not in ("live", "mock"):
+        return None
+    wrapper = state.get(kind)
+    if not isinstance(wrapper, dict) or ask_muse.report_kind(wrapper) != kind:
+        return None
+    return wrapper
+
+
+def _active_report():
+    state = _ai_state()
+    kind = state.get("active")
+    if kind not in ("live", "mock"):
+        result["ai"] = None
+        return None, None
+    wrapper = _current_report(kind)
+    if wrapper is None:
+        state["active"] = None
+        _save_ai_state(state)
+        result["ai"] = None
+        return None, None
+    result["ai"] = wrapper
+    return kind, wrapper
+
+
+def _live_request_failed(exc):
+    """Safe, actionable failure path; never substitute a mock for live AI."""
+    message = _safe_error(exc)
+    st.session_state["ai_last_error"] = message
+    # Keep a stored mock for a later explicit mock click, but do not display it
+    # after a failed live request. Nothing is presented as a live response.
+    _set_active_report(None)
+    st.error(f"Muse Spark request failed: {message}")
+    st.info(
+        "No live report was produced. Check BASETEN_API_KEY, model access, "
+        "network connectivity and provider quota, then retry. Deterministic "
+        "results and exports are unaffected. The labelled OFFLINE MOCK is a "
+        "separate action and was NOT substituted for this failed request."
+    )
+
+
+def _mock_request_failed(exc):
+    st.session_state["ai_last_error"] = _safe_error(exc)
+    st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+
+
+def store_validated_report(wrapper, titles, *, kind):
+    """Validate and store a report with explicit, action-appropriate provenance."""
+    try:
+        wrapper = ask_muse.enforce_report_provenance(wrapper, kind)
+    except (ValueError, RuntimeError) as exc:
+        if kind == "live":
+            _live_request_failed(exc)
+        else:
+            _mock_request_failed(exc)
+        return
     structured = ask_muse.validate_report(
         wrapper.get("structured"), titles, profile=report_profile,
         allowed_evidence_ids=context.get("result_ids"),
     )
     if structured is None:
         st.session_state["ai_last_error"] = "invalid report"
+        if kind == "live":
+            _set_active_report(None)
         st.error("Report rejected: incomplete report or strict schema validation "
                  "failure; nothing was stored.")
         return
     wrapper["structured"] = structured
-    st.session_state["ai_state"] = {"hash": context_hash, "wrapper": wrapper}
+    state = _ai_state()
+    state[kind] = wrapper
+    state["active"] = kind
+    _save_ai_state(state)
     st.session_state.pop("ai_last_error", None)
     result["ai"] = wrapper
     st.rerun()
 
 
 if st.button("Generate evidence-grounded interpretation", type="primary"):
-    # Three guards against accidental duplicate provider calls: an existing
-    # report for this exact context, a per-session in-flight flag, and the
-    # explicit button action itself. A page rerun never calls the provider.
-    if _current_report():
-        st.info("A validated report for this exact analysis is already available; "
-                "no duplicate provider request was sent.")
+    # Reuse ONLY a live report for the same context. A mock never blocks a
+    # provider request. The in-flight flag prevents duplicate rapid clicks.
+    if _current_report("live"):
+        _set_active_report("live")
+        st.info("A validated live Muse Spark report for this exact analysis is "
+                "already available; no duplicate provider request was sent.")
     elif not provider_config.get_api_key():
-        st.warning("BASETEN_API_KEY is not set; AI interpretation is unavailable. "
-                   "All deterministic results and exports remain available. "
-                   "Use the labelled offline MOCK button below for a deterministic preview.")
+        if _current_report("mock"):
+            st.warning("BASETEN_API_KEY is not set; a labelled OFFLINE MOCK is "
+                       "available, but live Muse Spark requires a key. The MOCK "
+                       "is NOT a live response. Deterministic results and exports "
+                       "remain available.")
+        else:
+            st.warning("BASETEN_API_KEY is not set; AI interpretation is unavailable. "
+                       "All deterministic results and exports remain available. "
+                       "Use the labelled offline MOCK button below for a deterministic preview.")
     elif st.session_state.get("ai_request_in_flight"):
         st.info("An AI request is already in progress for this session. "
                 "Wait for it to finish before retrying.")
@@ -791,66 +891,65 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
                     wrapper = ask_muse.generate_interpretation(
                         context, section_titles=titles, profile=report_profile
                     )
+                wrapper = ask_muse.enforce_report_provenance(wrapper, "live")
         except (ValueError, RuntimeError) as exc:
-            st.session_state["ai_last_error"] = _safe_error(exc)
-            st.error(f"Muse Spark request failed: {_safe_error(exc)}")
-            st.info("Deterministic results and exports are unaffected. The offline MOCK "
-                    "button below gives a labelled template preview, NOT an AI response.")
+            _live_request_failed(exc)
         except Exception as exc:
-            st.session_state["ai_last_error"] = _safe_error(exc)
-            st.error(f"Muse Spark request failed: {_safe_error(exc)}")
-            st.info("Deterministic results and exports are unaffected. The offline MOCK "
-                    "button below gives a labelled template preview, NOT an AI response.")
+            _live_request_failed(exc)
         else:
-            store_validated_report(wrapper, titles)
+            store_validated_report(wrapper, titles, kind="live")
         finally:
             st.session_state.pop("ai_request_in_flight", None)
 
 if st.button("Preview deterministic OFFLINE MOCK report (no API key, NOT AI)",
              key="offline_mock_report"):
-    if _current_report():
-        st.info("A report for this exact analysis is already available; "
-                "no duplicate mock was generated.")
+    # The mock action reuses ONLY a mock; it never constructs a provider client.
+    if _current_report("mock"):
+        _set_active_report("mock")
+        st.info("A labelled OFFLINE MOCK for this exact analysis is already "
+                "available; no duplicate mock was generated.")
     else:
         try:
             wrapper = ask_muse.generate_mock_report(
                 context, section_titles=list(effective_titles),
                 profile=report_profile, research_question=question,
             )
+            wrapper = ask_muse.enforce_report_provenance(wrapper, "mock")
         except (ValueError, RuntimeError) as exc:
-            st.session_state["ai_last_error"] = _safe_error(exc)
-            st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+            _mock_request_failed(exc)
         except Exception as exc:
-            st.session_state["ai_last_error"] = _safe_error(exc)
-            st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+            _mock_request_failed(exc)
         else:
-            store_validated_report(wrapper, list(effective_titles))
+            store_validated_report(wrapper, list(effective_titles), kind="mock")
 
-current_report = _current_report()
-if current_report:
-    is_mock_report = bool(current_report.get("is_mock")
-                          or current_report.get("source") == "offline_mock")
-    ai_status = ("offline MOCK generated (NOT AI)" if is_mock_report
-                 else "succeeded (live AI report, unverified hypotheses)")
+active_kind, current_report = _active_report()
+if active_kind == "mock":
+    ai_status = "offline MOCK generated (NOT AI)"
+elif active_kind == "live":
+    ai_status = "succeeded (live AI report, unverified hypotheses)"
 elif st.session_state.get("ai_request_in_flight"):
     ai_status = "running"
 elif st.session_state.get("ai_last_error"):
     ai_status = "failed"
 else:
     ai_status = "not run"
-st.caption(f"AI status: {ai_status}. Live calls require the explicit button above; "
-           "the agent has a separate consent checkbox. Local results survive AI failure.")
+st.caption(f"AI status: {ai_status}. Active provenance: {active_kind or 'none'}. "
+           "Live calls require the explicit button above; the agent has a "
+           "separate consent checkbox. Local results survive AI failure.")
 
-if result.get("ai"):
-    wrapper = result["ai"]
-    is_mock = bool(wrapper.get("is_mock") or wrapper.get("source") == "offline_mock")
-    if is_mock:
+if current_report:
+    wrapper = current_report
+    if active_kind == "mock":
         st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
         st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
-        st.caption(f"Generator: {wrapper.get('model')}. No provider request was made.")
+        st.caption(f"Generator: {wrapper.get('model')}. Provider status: "
+                   f"{wrapper.get('provider_status')}. No provider request was made.")
     else:
         st.markdown("### Muse Spark report (AI-generated, unverified)")
-        st.caption(f"Provider model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
+        st.caption(f"Provider provenance: {wrapper.get('source')} "
+                   f"(is_mock={str(wrapper.get('is_mock')).lower()}); "
+                   f"provider status: {wrapper.get('provider_status')}; "
+                   f"model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
     for section in wrapper["structured"]["sections"]:
         st.markdown(f"**{section['title']}**")
         st.text(section["content"])
