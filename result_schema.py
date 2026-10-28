@@ -529,6 +529,24 @@ def markdown_report(result: dict) -> str:
             lines += ["", f"### {label}", ""]
             for note in block.get("notes") or []:
                 lines.append(f"- {_markdown_text(note)}")
+        chapter = research.get("chapter") or {}
+        if chapter:
+            lines += ["", "### Conditional theory chapter", ""]
+            for item in chapter.get("missing") or []:
+                lines.append(f"- Missing or unavailable: {_markdown_text(item)}")
+            if chapter.get("symbols"):
+                lines += ["", "| Symbol | Meaning | Unit | Origin |", "| --- | --- | --- | --- |"]
+                for symbol in chapter["symbols"]:
+                    lines.append(f"| {_fmt(symbol.get('symbol'))} | {_fmt(symbol.get('meaning'))} | "
+                                 f"{_fmt(symbol.get('unit'))} | {_fmt(symbol.get('origin'))} |")
+            for section in chapter.get("sections") or []:
+                lines += ["", f"#### {_markdown_text(section.get('title'))}", ""]
+                lines.extend(_markdown_text(paragraph) for paragraph in section.get("body") or [])
+            derived = chapter.get("derived")
+            if derived:
+                lines += ["", f"Conditional resistance from fitted slope: {_fmt(derived.get('value'))} "
+                          f"{_fmt(derived.get('unit'))}; unit conversion factor {_fmt(derived.get('conversion_factor'))}. "
+                          "This model-based interpretation is not independently verified."]
         lines += ["", "External references were not retrieved or verified."]
     return "\n".join(lines) + "\n"
 

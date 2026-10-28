@@ -51,6 +51,7 @@ from statistics_core import (
     descriptive_table,
     outlier_diagnostics,
 )
+from theory_engine import ohmic_chapter
 from visualization_core import PLOT_TYPES, build_chart, render_png
 
 ROOT = Path(__file__).resolve().parent
@@ -382,7 +383,7 @@ with st.expander("Research context and offline learning (optional)"):
         research_apparatus = st.text_input("Apparatus and measurement method", max_chars=500)
         research_conditions = st.text_input("Experimental conditions", max_chars=500)
         research_equation = st.text_input("Known theoretical equation (user supplied)", max_chars=300)
-        research_level = st.selectbox("Explanation level", ["beginner", "intermediate", "advanced"])
+        research_level = st.selectbox("Explanation level", ["beginner", "undergraduate", "postgraduate", "research", "intermediate", "advanced"])
         research_ohmic = st.checkbox(
             "I confirm X is current and Y is voltage in an approximately ohmic experiment", value=False,
             help="This is a user-supplied assumption, not identification from column names."
@@ -593,7 +594,8 @@ try:
     )
     if research_context is not None:
         result["research"] = {"context": research_context, "theory": theory_notes(result, research_context),
-                              "reliability": reliability_notes(result)}
+                              "reliability": reliability_notes(result),
+                              "chapter": ohmic_chapter(result, research_context)}
     context = ai_context(result, research_question=question)
     context_hash = _hash({
         "result": {key: result[key] for key in (
@@ -826,6 +828,23 @@ if research_context is not None:
         st.write("**Reliability and uncertainty**")
         for note in result["research"]["reliability"]["notes"]:
             st.text(note)
+
+        chapter = result["research"]["chapter"]
+        with st.expander("Conditional theory chapter", expanded=False):
+            st.caption("Offline educational text — user-confirmed assumptions, not experimental proof or verified citations.")
+            for item in chapter["missing"]:
+                st.warning(item)
+            if chapter["symbols"]:
+                st.dataframe(pd.DataFrame(chapter["symbols"]), width="stretch", hide_index=True)
+            for section in chapter["sections"]:
+                st.write(f"**{section['title']}**")
+                for paragraph in section["body"]:
+                    st.text(paragraph)
+            if chapter["derived"]:
+                value = chapter["derived"]
+                st.text(f"Conditional resistance from current fit: {value['value']:.6g} {value['unit']} "
+                        f"(unit conversion factor {value['conversion_factor']:.6g}; not independently verified).")
+            st.caption(chapter["reference_status"])
 
 
 # ---------------------------------------------------------------------------
