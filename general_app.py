@@ -17,6 +17,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -35,6 +36,7 @@ from fitting_core import (
     predict_with_flags,
     suggest_models,
 )
+from research_assistant import experiment_context, reliability_notes, theory_notes
 from result_schema import (
     ai_context,
     build_result,
@@ -370,6 +372,28 @@ if secondary_y:
         "dual axes can imply relationships that depend only on scale choices."
     )
 
+with st.expander("Research context and offline learning (optional)"):
+    research_enabled = st.checkbox("Include offline theory and reliability notes", value=False)
+    research_context = None
+    if research_enabled:
+        research_title = st.text_input("Experiment title", max_chars=300)
+        research_discipline = st.text_input("Scientific discipline", max_chars=100)
+        research_description = st.text_area("Experiment description", max_chars=1000)
+        research_apparatus = st.text_input("Apparatus and measurement method", max_chars=500)
+        research_conditions = st.text_input("Experimental conditions", max_chars=500)
+        research_equation = st.text_input("Known theoretical equation (user supplied)", max_chars=300)
+        research_level = st.selectbox("Explanation level", ["beginner", "intermediate", "advanced"])
+        research_ohmic = st.checkbox(
+            "I confirm X is current and Y is voltage in an approximately ohmic experiment", value=False,
+            help="This is a user-supplied assumption, not identification from column names."
+        )
+        research_context = experiment_context(
+            title=research_title, discipline=research_discipline, description=research_description,
+            apparatus=research_apparatus, conditions=research_conditions, known_equation=research_equation,
+            level=research_level, confirmed_ohmic=research_ohmic,
+        )
+        st.caption("This optional context is user supplied, not verified. Do not include sensitive information in exports.")
+
 report_profile = st.selectbox(
     "AI report profile", list(ask_muse.REPORT_PROFILES),
     index=list(ask_muse.REPORT_PROFILES).index(ask_muse.DEFAULT_REPORT_PROFILE),
@@ -461,7 +485,7 @@ except Exception as exc:
 comparison_results = []
 candidate_models = ["linear", "polynomial", "exponential", "logarithmic", "power"]
 if len(x_values) > 5000:
-    candidate_models = ["linear", "polynomial"]
+    candidate_models = list(dict.fromkeys(["linear", "polynomial", model_name]))
 for candidate in candidate_models:
     if candidate == model_name:
         comparison_results.append(fit)
@@ -567,6 +591,9 @@ try:
             "Interactive HTML plots load Vega-Lite from a CDN; PNG plots are rendered locally.",
         ],
     )
+    if research_context is not None:
+        result["research"] = {"context": research_context, "theory": theory_notes(result, research_context),
+                              "reliability": reliability_notes(result)}
     context = ai_context(result, research_question=question)
     context_hash = _hash({
         "result": {key: result[key] for key in (
@@ -578,6 +605,7 @@ try:
         "question": question,
         "result_ids": context.get("result_ids"),
         "model": ask_muse.MODEL,
+        "research": result.get("research"),
     })
 except Exception as exc:
     st.error(f"Could not assemble the result record: {_safe_error(exc)}")
@@ -707,8 +735,43 @@ else:
                    "so parameter errors come from residual scatter and are not calibrated.")
 
 with st.expander("Compare candidate models"):
-    st.dataframe(pd.DataFrame(model_table), width="stretch", hide_index=True)
-    st.caption("AIC comparisons are valid only for fits on the same observations and the same weighting.")
+    choices = [item.model for item in comparison_results if item.success]
+    selected_models = st.multiselect("Candidate models to compare", choices, default=choices[:2],
+                                     help="Compares existing fits; it does not alter the selected model.")
+    st.dataframe(pd.DataFrame([row for row in model_table if not row.get("success")
+                               or row.get("model") in selected_models]), width="stretch", hide_index=True)
+    st.caption("AIC comparisons are valid only for fits on the same observations and the same weighting. "
+               "The fits use the same complete pairs here; unsupported model domains are rejected. "
+               "A low AIC or high R² is not proof of a mechanism. High-degree models can overfit; "
+               "inspect residuals and avoid unsupported extrapolation. No cross-validation is performed.")
+    try:
+        curve_rows = []
+        residual_rows = []
+        for candidate in comparison_results:
+            if candidate.model not in selected_models or not candidate.success or not candidate.x_range:
+                continue
+            grid = np.linspace(candidate.x_range[0], candidate.x_range[1], 100)
+            predicted = predict_with_flags(candidate, grid)
+            for xv, yv, flag in zip(grid, predicted.get("predicted", []), predicted.get("range_flags", []), strict=True):
+                if flag == "in_range" and np.isfinite(yv):
+                    curve_rows.append({"x": float(xv), "predicted": float(yv), "model": candidate.label})
+            if candidate.x_fit is not None and candidate.residuals is not None:
+                stride = max(1, int(np.ceil(len(candidate.x_fit) / 2000)))
+                for xv, residual in zip(candidate.x_fit[::stride], candidate.residuals[::stride], strict=True):
+                    if np.isfinite(xv) and np.isfinite(residual):
+                        residual_rows.append({"x": float(xv), "residual": float(residual), "model": candidate.label})
+        if curve_rows:
+            st.caption("Fitted curves over the measured range (no extrapolation).")
+            st.altair_chart(alt.Chart(pd.DataFrame(curve_rows)).mark_line().encode(
+                x=alt.X("x:Q", title=x_label), y=alt.Y("predicted:Q", title=y_label), color="model:N"
+            ), width="stretch")
+        if residual_rows:
+            st.caption("Residuals (observed minus fitted); at most 2,000 points per model shown.")
+            st.altair_chart(alt.Chart(pd.DataFrame(residual_rows)).mark_circle(size=30, opacity=0.55).encode(
+                x=alt.X("x:Q", title=x_label), y=alt.Y("residual:Q", title="Residual"), color="model:N"
+            ), width="stretch")
+    except (ValueError, OverflowError, TypeError) as exc:
+        st.warning(f"Could not display model comparison plots: {_safe_error(exc)}")
 
 st.write("**Follow-up predictions**")
 values = [item.strip() for item in str(candidate_text or "").split(",") if item.strip() != ""]
@@ -751,6 +814,18 @@ if values:
             st.caption(prediction["caveat"])
         else:
             st.info(prediction.get("reason", "Prediction unavailable."))
+
+
+if research_context is not None:
+    with st.expander("Theory and reliability (deterministic, not AI)", expanded=True):
+        st.caption("User-supplied context and theory assumptions are not independently verified. "
+                   "Computed fit values above remain authoritative. No external references were verified.")
+        st.write("**Theory and learning**")
+        for note in result["research"]["theory"]["notes"]:
+            st.text(note)
+        st.write("**Reliability and uncertainty**")
+        for note in result["research"]["reliability"]["notes"]:
+            st.text(note)
 
 
 # ---------------------------------------------------------------------------
