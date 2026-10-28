@@ -115,19 +115,14 @@ def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
     if len(prompt) > ask_muse.MAX_PROMPT_CHARS:
         raise PlannerUnavailable("planning prompt exceeds the size limit")
     try:
-        # Use the same provider conventions as the interpretation adapter.
-        original_tokens = ask_muse.MAX_COMPLETION_TOKENS
-        ask_muse.MAX_COMPLETION_TOKENS = MAX_PLAN_TOKENS
-        try:
-            client = ask_muse.OpenAI(
-                api_key=api_key, base_url=ask_muse.BASE_URL,
-                timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=0,
-            )
-            response = ask_muse._completion_request(
-                client, prompt, json_mode=True, modern_tokens=True
-            )
-        finally:
-            ask_muse.MAX_COMPLETION_TOKENS = original_tokens
+        # Pass a per-request budget; never mutate shared module-level settings.
+        client = ask_muse.OpenAI(
+            api_key=api_key, base_url=ask_muse.BASE_URL,
+            timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=0,
+        )
+        response = ask_muse._completion_request(
+            client, prompt, json_mode=True, modern_tokens=True, max_tokens=MAX_PLAN_TOKENS
+        )
     except Exception as exc:
         raise PlannerUnavailable(f"provider request failed ({type(exc).__name__})") from None
 

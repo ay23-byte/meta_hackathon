@@ -159,6 +159,17 @@ def get_api_key() -> str | None:
     return api_key_status()["key"]
 
 
+def get_report_token_budget() -> int:
+    """Bound an optional live-report budget; invalid settings fail before a request."""
+    raw = get_setting("LABLENS_REPORT_MAX_TOKENS", "4096")
+    if not raw.isascii() or not raw.isdecimal():
+        raise ValueError("LABLENS_REPORT_MAX_TOKENS must be an integer from 1024 to 16384.")
+    value = int(raw)
+    if not 1024 <= value <= 16384:
+        raise ValueError("LABLENS_REPORT_MAX_TOKENS must be an integer from 1024 to 16384.")
+    return value
+
+
 def get_model() -> str:
     """Return the configured model, honoring process-env precedence."""
     return get_setting(MODEL_ENV, DEFAULT_MODEL)

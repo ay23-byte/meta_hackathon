@@ -409,3 +409,58 @@ def test_prompt_is_bounded_and_requires_every_section():
     assert f"at most {ask_muse.MAX_CLAIMS} claims" in prompt
     assert len(prompt) <= ask_muse.MAX_PROMPT_CHARS
     assert "no markdown code fences" in prompt
+
+
+def test_reasoning_only_length_is_truncated_not_generic_reasoning_error(fake_provider):
+    created = fake_provider([make_response(None, finish_reason="length", message_extra={
+        "reasoning_content": "private reasoning must never be included"})])
+    with pytest.raises(RuntimeError, match="truncated") as caught:
+        ask_muse.generate_interpretation(CONTEXT)
+    assert "private reasoning" not in str(caught.value)
+    assert len(created[0].calls) == 1
+
+
+def test_reasoning_only_without_length_is_incomplete_not_auto_retried(fake_provider):
+    response = make_response(None)
+    response.choices[0].message.reasoning_content = "private internal reasoning"
+    created = fake_provider([response])
+    with pytest.raises(RuntimeError, match="reasoning but no visible report") as caught:
+        ask_muse.generate_interpretation(CONTEXT)
+    assert "private internal reasoning" not in str(caught.value)
+    assert len(created[0].calls) == 1
+
+
+def test_refusal_is_not_a_valid_report(fake_provider):
+    response = make_response(as_content(valid_report()))
+    response.choices[0].message.refusal = "sensitive provider output"
+    created = fake_provider([response])
+    with pytest.raises(RuntimeError, match="declined") as caught:
+        ask_muse.generate_interpretation(CONTEXT)
+    assert "sensitive provider output" not in str(caught.value)
+    assert len(created[0].calls) == 1
+
+
+def test_report_budget_override_and_validation(fake_provider, monkeypatch):
+    monkeypatch.setenv("LABLENS_REPORT_MAX_TOKENS", "8192")
+    created = fake_provider([make_response(as_content(valid_report()))])
+    ask_muse.generate_interpretation(CONTEXT)
+    assert created[0].calls[0]["max_completion_tokens"] == 8192
+    monkeypatch.setenv("LABLENS_REPORT_MAX_TOKENS", "999999999")
+    with pytest.raises(ValueError, match="1024 to 16384"):
+        ask_muse.generate_interpretation(CONTEXT)
+    assert len(created[-1].calls) == 0
+
+
+def test_retry_after_respected_or_reported_without_early_retry(fake_provider, monkeypatch):
+    waits = []
+    monkeypatch.setattr(ask_muse.time, "sleep", waits.append)
+    error = HttpError(429)
+    error.response = SimpleNamespace(headers={"retry-after": "2"})
+    created = fake_provider([error, make_response(as_content(valid_report()))])
+    ask_muse.generate_interpretation(CONTEXT)
+    assert waits == [2.0] and len(created[0].calls) == 2
+    error.response.headers["retry-after"] = "120"
+    created = fake_provider([error])
+    with pytest.raises(RuntimeError, match="Wait before retrying"):
+        ask_muse.generate_interpretation(CONTEXT)
+    assert len(created[-1].calls) == 1

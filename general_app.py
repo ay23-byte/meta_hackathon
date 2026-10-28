@@ -839,8 +839,8 @@ def _live_request_failed(exc):
     _set_active_report(None)
     st.error(f"Muse Spark request failed: {message}")
     st.info(
-        "No live report was produced. Check BASETEN_API_KEY, model access, "
-        "network connectivity and provider quota, then retry. Deterministic "
+        "No live report was produced. Follow the specific error above before retrying; "
+        "a retry may consume credits. Deterministic "
         "results and exports are unaffected. The labelled OFFLINE MOCK is a "
         "separate action and was NOT substituted for this failed request."
     )
@@ -896,7 +896,8 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
     if _current_report("live") and not regenerate_live:
         _set_active_report("live")
         st.info("A validated live Muse Spark report for this exact analysis is "
-                "already available; no duplicate provider request was sent.")
+                "already available; no duplicate provider request was sent. This is a previously "
+                "validated report, not a new response.")
     elif not provider_config.get_api_key():
         if _current_report("mock"):
             st.warning("BASETEN_API_KEY is not set; a labelled OFFLINE MOCK is "
@@ -980,7 +981,9 @@ if current_report:
         st.caption(f"Provider provenance: {wrapper.get('source')} "
                    f"(is_mock={str(wrapper.get('is_mock')).lower()}); "
                    f"provider status: {wrapper.get('provider_status')}; "
-                   f"model: {wrapper.get('model')}. Treat this text as hypotheses, not evidence.")
+                   f"model: {wrapper.get('model')}; validated at: "
+                   f"{wrapper.get('validated_at_utc', 'unknown')}. "
+                   "Treat this text as hypotheses, not evidence.")
     for section in wrapper["structured"]["sections"]:
         st.markdown(f"**{section['title']}**")
         st.text(section["content"])
