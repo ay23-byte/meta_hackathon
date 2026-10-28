@@ -232,6 +232,9 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile
                 )
             if wrapper is not None:
+                wrapper = ask_muse.enforce_report_provenance(
+                    wrapper, "mock" if generate_mock else "live"
+                )
                 structured = ask_muse.validate_report(
                     wrapper.get("structured"), titles, profile=report_profile,
                     allowed_evidence_ids=context.get("result_ids"),

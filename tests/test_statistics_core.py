@@ -84,7 +84,7 @@ def test_correlation_matrix_leaves_undefined_entries_nan():
     matrix = correlation_matrix(frame, ["a", "b", "c"])
     assert matrix.loc["a", "b"] == pytest.approx(1.0)
     assert np.isnan(matrix.loc["a", "c"])
-    assert matrix.loc["c", "c"] == 1.0
+    assert np.isnan(matrix.loc["c", "c"])  # correlation of a constant is undefined
 
 
 def test_outliers_are_flagged_but_never_removed():

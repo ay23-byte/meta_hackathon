@@ -271,9 +271,12 @@ def fit_polynomial(x, y, degree: int = 2, weights=None, *, x_label="x", y_label=
     design = np.vander(scaled_x, degree + 1, increasing=True)
     sqrt_w = np.sqrt(w)
     try:
-        scaled_coeffs, *_ = np.linalg.lstsq(design * sqrt_w[:, None], y_fit * sqrt_w, rcond=None)
+        scaled_coeffs, _, rank, _ = np.linalg.lstsq(design * sqrt_w[:, None], y_fit * sqrt_w, rcond=None)
     except np.linalg.LinAlgError as exc:  # pragma: no cover - guarded by checks above
         return _failure(MODEL_POLYNOMIAL, f"Matrix solve failed: {exc}",
+                        n_observations=n, n_excluded=n_excluded)
+    if rank < degree + 1:
+        return _failure(MODEL_POLYNOMIAL, "Polynomial design is rank deficient; use more distinct X values or a lower degree.",
                         n_observations=n, n_excluded=n_excluded)
     if not np.all(np.isfinite(scaled_coeffs)):
         return _failure(MODEL_POLYNOMIAL, "The polynomial fit produced non-finite coefficients.",
@@ -575,6 +578,7 @@ def compare_models(results: list[FitResult]) -> list[dict]:
             return (2, 0.0)
         aic = row.get("aic")
         if aic is None:
-            return (1, -(row.get("adjusted_r2") or -1e9))
-        return (0, -aic)
+            adjusted = row.get("adjusted_r2")
+            return (1, -adjusted if adjusted is not None else float("inf"))
+        return (0, aic)
     return sorted(rows, key=key)

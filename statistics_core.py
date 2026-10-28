@@ -198,16 +198,23 @@ def correlation(x, y, method: str = "pearson") -> dict:
 def covariance(x, y, *, ddof: int = 1) -> dict:
     left = pd.to_numeric(pd.Series(np.asarray(x, dtype=object).reshape(-1)), errors="coerce").to_numpy(dtype=float)
     right = pd.to_numeric(pd.Series(np.asarray(y, dtype=object).reshape(-1)), errors="coerce").to_numpy(dtype=float)
+    if left.size != right.size:
+        return {"valid": False, "n_valid": 0, "value": None, "ddof": ddof,
+                "reason": "The two columns have different lengths."}
     mask = np.isfinite(left) & np.isfinite(right)
     n_valid = int(mask.sum())
     if n_valid <= ddof:
         return {"valid": False, "n_valid": n_valid, "value": None, "ddof": ddof,
                 "reason": "Insufficient complete finite pairs for this ddof."}
     matrix = np.cov(left[mask], right[mask], ddof=ddof)
+    value = float(matrix[0, 1])
+    if not math.isfinite(value):
+        return {"valid": False, "n_valid": n_valid, "value": None, "ddof": ddof,
+                "reason": "Covariance is non-finite; values may be too large."}
     return {
         "valid": True,
         "n_valid": n_valid,
-        "value": float(matrix[0, 1]),
+        "value": value,
         "ddof": ddof,
         "reason": None,
     }
@@ -217,7 +224,8 @@ def correlation_matrix(frame: pd.DataFrame, columns: list[str], method: str = "p
     """Pairwise correlation matrix; undefined entries stay NaN."""
     matrix = pd.DataFrame(np.nan, index=columns, columns=columns, dtype=float)
     for i, first in enumerate(columns):
-        matrix.loc[first, first] = 1.0 if first in frame.columns else np.nan
+        diagonal = correlation(frame[first], frame[first], method=method) if first in frame.columns else {}
+        matrix.loc[first, first] = 1.0 if diagonal.get("valid") else np.nan
         for second in columns[i + 1:]:
             if first not in frame.columns or second not in frame.columns:
                 continue

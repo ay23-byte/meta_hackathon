@@ -140,6 +140,23 @@ with st.sidebar:
             "offline_mock_available", "max_transient_retries",
         )})
         st.caption(provider["message"])
+    if st.checkbox("Show optional provider connectivity check", value=False):
+        st.caption("Sends one minimal request without dataset context; it may consume credits. "
+                   "It does not verify structured report generation.")
+        if st.button("Check provider connectivity", key="provider_connectivity"):
+            try:
+                with st.spinner("Checking provider connectivity..."):
+                    ask_muse.check_provider_connectivity()
+            except (RuntimeError, ValueError) as exc:
+                st.session_state["provider_check_result"] = ("failed", _safe_error(exc))
+            else:
+                st.session_state["provider_check_result"] = ("succeeded", "A non-empty response was received. Structured reports were not tested.")
+        check = st.session_state.get("provider_check_result")
+        if check:
+            if check[0] == "succeeded":
+                st.success(f"Connectivity check succeeded: {check[1]}")
+            else:
+                st.error(f"Connectivity check failed: {check[1]}")
     st.markdown("**Workflow**")
     for letter, label in (
         ("A", "Upload"), ("B", "Validate / Clean"), ("C", "Configure"),
@@ -742,6 +759,12 @@ if values:
 
 step_header("F", "Interpret", "Live Muse Spark is optional. Computed results above are authoritative; "
             "AI text and the explicitly labelled offline MOCK are never experimental evidence.")
+st.caption(
+    "A live request sends a bounded summary including the question, file and column names, "
+    "selected units, cleaning decisions, statistics, fit and warnings. Raw CSV rows are not "
+    "intentionally sent, but names and free text may contain sensitive information; review "
+    "them before requesting AI. No provider request occurs on startup."
+)
 st.caption(f"Provider status: {provider['message']} "
            f"(live_verified={str(provider['live_verified']).lower()}, "
            f"mock_available={str(provider['offline_mock_available']).lower()}).")
@@ -850,6 +873,10 @@ def store_validated_report(wrapper, titles, *, kind):
                  "failure; nothing was stored.")
         return
     wrapper["structured"] = structured
+    wrapper["analysis_fingerprint"] = context_hash
+    wrapper["validation_status"] = "validated"
+    from datetime import datetime, timezone
+    wrapper["validated_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     state = _ai_state()
     state[kind] = wrapper
     state["active"] = kind
@@ -859,10 +886,14 @@ def store_validated_report(wrapper, titles, *, kind):
     st.rerun()
 
 
+regenerate_live = st.checkbox(
+    "Regenerate live report on next click", value=False,
+    help="Explicitly request a new provider call even if a validated report exists. May consume credits.",
+)
 if st.button("Generate evidence-grounded interpretation", type="primary"):
     # Reuse ONLY a live report for the same context. A mock never blocks a
     # provider request. The in-flight flag prevents duplicate rapid clicks.
-    if _current_report("live"):
+    if _current_report("live") and not regenerate_live:
         _set_active_report("live")
         st.info("A validated live Muse Spark report for this exact analysis is "
                 "already available; no duplicate provider request was sent.")
@@ -956,7 +987,7 @@ if current_report:
     if wrapper["structured"].get("claims"):
         st.markdown("**Evidence-linked claims**")
         for index, claim in enumerate(wrapper["structured"]["claims"], start=1):
-            st.markdown(f"**Claim {index}** ({claim['evidence_type']}): {claim['claim']}")
+            st.text(f"Claim {index} ({claim['evidence_type']}): {claim['claim']}")
             ids = claim.get("evidence_ids") or []
             id_text = f" · Computed result IDs: {', '.join(ids)}" if ids else ""
             st.caption(f"Evidence: {claim['evidence']} · Limitation: {claim['limitation']} · "

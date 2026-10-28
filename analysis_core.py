@@ -196,8 +196,10 @@ def serialize_analysis_exports(record, cleaned_data, report_markdown):
             return float(value) if np.isfinite(value) else None
         return value
 
+    from result_schema import _csv_bytes
+
     return {
         "json": json.dumps(safe(record), indent=2, allow_nan=False),
-        "csv": cleaned_data.to_csv(index=False),
+        "csv": _csv_bytes(cleaned_data).decode("utf-8-sig"),
         "markdown": str(report_markdown),
     }

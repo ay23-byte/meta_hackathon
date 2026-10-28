@@ -94,7 +94,7 @@ ruff check .
 Live validation (billable, opt-in):
 
 ```bash
-python -m pytest -m live -v
+python -m pytest --run-live -m live -v
 ```
 
 Tests use isolated values and `tmp_path` output directories. The CLI
@@ -128,8 +128,9 @@ provenance. `requirements.lock.txt` records the exact tested environment.
 
 ## Known limitations
 
-The current app fits a straight line only and treats x and y values as
-exact for OLS. Provenance and units are user supplied or unknown. The
+The legacy physics app fits a straight line and treats x and y values as
+exact for OLS. The general app also offers polynomial and restricted nonlinear
+models and optional inverse-variance weighting. Provenance and units are user supplied or unknown. The
 bundled sample dataset has no independently verified origin. Live Muse
 Spark end-to-end behaviour has not been verified in this environment;
 see `docs/PROVIDER_INTEGRATION.md`.
@@ -185,3 +186,17 @@ omits overflowed dispersion values and keeps finite min/max/quantiles;
 error instead of a degenerate interval. Floating-point warnings are suppressed
 locally with `np.errstate`. Known-value and fixed-seed synthetic tests pass.
 Final full offline suite: **426 passed, 2 skipped**.
+
+## Audit corrections (28 Oct 2026)
+
+Model comparison now sorts lower AIC first, and polynomial fitting rejects
+rank-deficient design matrices. A constant variable's correlation with itself
+is undefined, not one. Covariance rejects unequal input lengths and nonfinite
+results. Regression tests are in `tests/test_audit_regressions.py`.
+The implemented AIC uses `n*log(weighted_SSE/n) + 2*k` up to constants;
+compare it only on the same retained observations and identical weights. It is
+not a universal likelihood or a justification for causal or physical claims.
+Reported RMSE and MAE are unweighted, whereas R² and chi-square use the supplied
+weights; the reported reduced chi-square has its standard measurement-error
+interpretation only when weights really are known inverse variances. The demo
+and tests cannot establish these assumptions for arbitrary data.

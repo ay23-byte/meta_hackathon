@@ -6,7 +6,7 @@ demo. If you use live Muse Spark, configure the key locally and never show it.
 
 ## 1. Setup (Windows PowerShell)
 
-Run from the repository root `F:\meta-hacathon\meta_hackathon`:
+Run from your local repository root:
 
 ```powershell
 python -m venv .venv
@@ -26,8 +26,7 @@ notepad .env
 
 Put your own private value in `.env` as `BASETEN_API_KEY=...`. The repository
 only contains the placeholder in `.env.example`. A key being present does not
-prove live reachability; the sidebar shows `live_verified=false` until a real
-request succeeds. `LABLENS_DISABLE_DOTENV=1` can be set in CI/tests to ignore
+prove live reachability; the sidebar configuration check always shows `live_verified=false`; a validated live report is shown separately after a successful request. `LABLENS_DISABLE_DOTENV=1` can be set in CI/tests to ignore
 `.env`; do not set it for a live demo.
 
 ## 2. Launch
@@ -53,7 +52,7 @@ Legacy app (optional comparison):
 | 1:35–2:00 | Steps D–E: show scatter/residual plots and fit metrics. | Slope `2.5`, intercept `0.1`, R² `1.0`, 12 observations. Say these are computed locally, not AI. |
 | 2:00–2:20 | Step F: press **Preview deterministic OFFLINE MOCK report (no API key, NOT AI)**. Read the disclaimer aloud. | Heading "OFFLINE MOCK report — NOT Muse Spark, NOT AI"; scientific sections quote only the computed numbers. If a working key is configured, press the separate live button instead and label the text "AI-generated, unverified". |
 | 2:20–2:35 | Step G: download cleaned CSV, JSON and ZIP. | Three download buttons; ZIP contains `results.json`, `report.md`, fit CSVs, statistics CSV, cleaned CSV and plots. |
-| 2:35–2:45 | In a terminal, show the offline verification. | `.\.venv\Scripts\python.exe -m pytest -q` → **426 passed, 2 skipped** in this workspace; the two skips are opt-in live provider tests. |
+| 2:35–2:45 | In a terminal, show the offline verification. | `.\.venv\Scripts\python.exe -m pytest -q` → **436 passed, 2 skipped** in this workspace; the two skips are opt-in live provider tests. |
 
 PowerShell CLI equivalent for the same synthetic dataset (writes a labelled
 offline mock report without any network call):
