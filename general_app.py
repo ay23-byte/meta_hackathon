@@ -317,6 +317,15 @@ with st.expander("Cleaning options and preview", expanded=True):
 
 step_header("C", "Configure", "Role hints are suggestions only; your choices determine the analysis.")
 
+# Explicit overrides may include mixed columns, but an axis still needs at
+# least two finite numeric values; a categorical selection is not an axis.
+axis_columns = [name for name in numeric_override
+                if np.isfinite(pd.to_numeric(frame[name], errors="coerce").to_numpy(dtype=float, na_value=np.nan)).sum() >= 2]
+if len(axis_columns) < 2:
+    st.info("Select at least two columns with two or more finite numeric values in the cleaning options to plot X versus Y. "
+            "Categorical columns can be used for grouping, not numeric axes.")
+    st.stop()
+
 role_col, model_col, unit_col = st.columns(3)
 with role_col:
     def choose(label, options, default, *, allow_none=True):
@@ -325,8 +334,8 @@ with role_col:
         chosen = st.selectbox(label, values, index=values.index(wanted))
         return None if chosen == "(none)" else chosen
 
-    x_col = choose("X column (independent)", all_columns, suggestion.x or all_columns[0], allow_none=False)
-    y_options = [column for column in numeric_override if column != x_col]
+    x_col = choose("X column (independent)", axis_columns, suggestion.x or axis_columns[0], allow_none=False)
+    y_options = [column for column in axis_columns if column != x_col]
     y_col = choose("Y column (dependent)", y_options, suggestion.y, allow_none=False)
     group_col = choose("Group / category column", all_columns, suggestion.group)
     time_col = choose("Time column", all_columns, suggestion.time)
@@ -345,6 +354,8 @@ with model_col:
     )
     correlation_method = st.selectbox("Correlation method", ["pearson", "spearman"])
     plot_type = st.selectbox("Primary chart", list(PLOT_TYPES), format_func=lambda key: PLOT_TYPES[key])
+    show_fit_on_scatter = st.checkbox("Overlay selected fitted model on scatter", value=False,
+                                      help="The line is a fitted prediction, not an observation or proof of causation.")
     bins = st.slider("Histogram bins", 5, 100, 30)
 with unit_col:
     default_x_unit = "A" if "current" in str(x_col).casefold() else ""
@@ -361,7 +372,7 @@ with unit_col:
                    "(for example mA versus A); verify the units before interpreting results.")
     question = st.text_input("Scientific question", value="How does Y vary with X?", max_chars=MAX_SHORT_TEXT)[:MAX_SHORT_TEXT]
     candidate_text = st.text_input(
-        "Candidate current values" if source_name == SAMPLE.name else f"Candidate {x_col} values",
+        "Candidate current values" if uploaded is None and source_name == SAMPLE.name and x_col == "current_A" else f"Candidate {x_col} values",
         value="", max_chars=MAX_CANDIDATE_TEXT,
         help="Comma-separated numeric X values for model-based predictions.",
     )
@@ -369,6 +380,8 @@ with unit_col:
 st.caption(
     f"Selected model: {MODEL_SPECS[model_name]['label']} — {MODEL_SPECS[model_name]['assumptions']}"
 )
+st.caption("The initial linear model is an exploratory default, not an assertion that the data "
+           "are linear. Select a model appropriate to the experiment; a fitted line does not imply causation.")
 domain_meta = next(module for module in list_domain_modules() if module["id"] == domain_id)
 with st.expander("Domain assumptions (read before interpreting)"):
     st.write(domain_meta["description"])
@@ -531,8 +544,9 @@ try:
     chart_config = {
         "x": x_col, "y": y_col, "group": group_col, "time": time_col,
         "uncertainty": uncertainty_col, "secondary_y": secondary_y,
-        "bins": bins, "fit_result": fit, "numeric_columns": numeric_override,
-        "correlation_method": correlation_method,
+        "bins": bins, "fit_result": fit, "show_fit": show_fit_on_scatter,
+        "numeric_columns": numeric_override, "unit_x": unit_x, "unit_y": unit_y,
+        "unit_time": unit_time, "correlation_method": correlation_method,
     }
     # Use companion numeric columns where available so arbitrary headers work.
     chart_frame = working.copy()
@@ -722,7 +736,8 @@ with st.expander("Model suggestions (shape heuristics only)"):
 
 step_header("E", "Fit", "The model is fitted only when you choose one; failures are reported instead of hidden.")
 
-is_sample = source_name == SAMPLE.name and model_name == "linear"
+is_sample = (uploaded is None and source_name == SAMPLE.name and model_name == "linear"
+             and x_col == "current_A" and y_col == "voltage_V")
 slope_label = "Slope (ΔV / ΔI)" if is_sample else f"Slope (Δ{unit_y or 'Y'} / Δ{unit_x or 'X'})"
 r2_value = (fit.metrics or {}).get("r2")
 f1, f2, f3 = st.columns(3)

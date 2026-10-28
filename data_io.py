@@ -242,6 +242,9 @@ def read_csv_robust(
     cleaned_names = [re.sub(r"\s+", " ", name).strip() or f"column_{i}" for i, name in enumerate(header_labels)]
     if cleaned_names != header_labels:
         warnings.append("Column names were trimmed of extra whitespace.")
+    if _find_duplicate_headers(cleaned_names):
+        raise DataImportError("Column names become duplicates after whitespace normalization. "
+                              "Rename the conflicting headers before uploading.")
     frame.columns = cleaned_names
 
     return DatasetLoad(
