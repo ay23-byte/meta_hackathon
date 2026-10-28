@@ -3,8 +3,9 @@
 Run `python -m streamlit run general_app.py` from the repository root after
 installing dependencies. Upload a supported delimited text file or use the
 bundled example. Inspect data quality and the cleaning preview, choose roles,
-units and a model, then inspect statistics, plots, residuals and extrapolation
-warnings. In **Research context and offline learning**, enable the notes and
+units and a model, then inspect the deterministic Key insights cards, statistics,
+plots, residuals and extrapolation warnings. Verify unit hints: column names do not
+establish units. In **Research context and offline learning**, enable the notes and
 provide only non-sensitive metadata. Confirm the Ohmic model only when you
 know X is current, Y is voltage and the assumptions are reasonable; the app
 does not establish this from a filename or a fit. Read the conditional theory

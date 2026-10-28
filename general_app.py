@@ -352,6 +352,13 @@ with unit_col:
     unit_x = unit_text(st.text_input("X unit (optional)", value=default_x_unit, max_chars=MAX_UNIT_TEXT))
     unit_y = unit_text(st.text_input("Y unit (optional)", value=default_y_unit, max_chars=MAX_UNIT_TEXT))
     unit_time = unit_text(st.text_input("Time unit (optional)", value="", max_chars=MAX_UNIT_TEXT))
+    unit_x_origin = ("matches_unverified_header_hint" if default_x_unit and unit_x == default_x_unit
+                     else "selected_or_retained" if unit_x else "unspecified")
+    unit_y_origin = ("matches_unverified_header_hint" if default_y_unit and unit_y == default_y_unit
+                     else "selected_or_retained" if unit_y else "unspecified")
+    if "matches_unverified_header_hint" in (unit_x_origin, unit_y_origin):
+        st.warning("Some unit values match defaults inferred from column names. These hints may be wrong "
+                   "(for example mA versus A); verify the units before interpreting results.")
     question = st.text_input("Scientific question", value="How does Y vary with X?", max_chars=MAX_SHORT_TEXT)[:MAX_SHORT_TEXT]
     candidate_text = st.text_input(
         "Candidate current values" if source_name == SAMPLE.name else f"Candidate {x_col} values",
@@ -577,6 +584,7 @@ roles = {
     "x": x_col, "y": y_col, "group": group_col, "time": time_col,
     "uncertainty": uncertainty_col, "secondary_y": list(secondary_y),
     "unit_x": unit_x, "unit_y": unit_y, "unit_time": unit_time,
+    "unit_x_origin": unit_x_origin, "unit_y_origin": unit_y_origin,
     "question": question, "model": model_name, "degree": degree,
     "domain": domain_id, "correlation_method": correlation_method,
 }
@@ -627,6 +635,22 @@ else:
         st.session_state.pop("ai_state", None)
 result["ai"] = None
 
+
+# Deterministic summaries are shown before the detailed analysis tables.
+st.subheader("Key insights")
+st.caption(result["insights"]["ranking"])
+if not result["insights"]["items"]:
+    st.info("Insufficient information for supported insight cards.")
+for card in result["insights"]["items"]:
+    with st.container(border=True):
+        st.text(f"{card['title']} — {card['label']}")
+        st.text(card["observation"])
+        st.text(f"Interpretation: {card['interpretation']}")
+        st.text(f"Evidence: {', '.join(card['evidence_paths'])}")
+        st.text(f"Limitations: {card['limitations']}")
+        st.text(f"Next step: {card['next_step']}")
+        st.caption(f"Why highlighted: {card['rank_reason']}")
+st.caption(result["insights"]["limitations"])
 
 # ---------------------------------------------------------------------------
 # D · Explore

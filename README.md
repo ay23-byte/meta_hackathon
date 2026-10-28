@@ -201,6 +201,13 @@ python analyze_dataset.py data/sample_voltage_current.csv \
 Synthetic example datasets are documented in `data/examples/README.md`. They
 are computer-generated, **not** experimental evidence.
 
+## Key insights
+
+After configuration, deterministic cards highlight supported fit, data-quality
+and diagnostic findings with result-field evidence and limitations. Their fixed
+ordering is not a confidence score. Verify units, including header-based hints,
+before interpretation. See [insight rules and limitations](docs/INSIGHT_ENGINE.md).
+
 ## Conditional theory chapter
 
 The optional research panel includes an offline Ohmic teaching chapter after
