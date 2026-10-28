@@ -1,48 +1,75 @@
-"""Optional LIVE Muse Spark integration tests (never run in offline CI).
+"""Optional LIVE Muse Spark integration tests (explicit opt-in only).
 
-These are skipped unless BASETEN_API_KEY is set. Run deliberately with:
+These are skipped during an ordinary ``pytest`` run. They are selected only
+when BOTH conditions hold:
 
-    python -m pytest -m live -v
+1. ``--run-live`` is supplied (see ``tests/conftest.py``); and
+2. a usable ``BASETEN_API_KEY`` is available from the process environment or
+   the project-local ``.env`` file through ``provider_config``.
 
-They make real provider calls that may consume credits. Offline contract
-tests for the same adapter live in tests/test_ask_muse_provider.py and use a
-fake client; a green offline suite is NOT evidence that the live endpoint
-works. Keep those two facts separate in any report.
+Run deliberately with:
+
+    python -m pytest --run-live -m live -v
+
+They make real provider calls that may consume credits. Offline contract tests
+for the same adapter live in ``tests/test_ask_muse_provider.py`` and
+``tests/test_provider_hardening.py`` and use a fake client; a green offline
+suite is NOT evidence that the live endpoint works. Keep those two facts
+separate in any report.
 """
 
-import os
-
 import pytest
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 
 import ask_muse
+import provider_config
 
 pytestmark = pytest.mark.live
 
 
-def _client(timeout=30.0):
+def _require_key() -> str:
+    status = provider_config.api_key_status()
+    if not status["present"]:
+        pytest.skip(
+            "BASETEN_API_KEY is not configured or is an obvious placeholder. "
+            "Live tests require --run-live and a real key."
+        )
+    return status["key"]
+
+
+def _client(api_key: str, timeout: float = 30.0):
     return OpenAI(
-        api_key=os.environ["BASETEN_API_KEY"],
-        base_url="https://inference.baseten.co/v1",
+        api_key=api_key,
+        base_url=provider_config.BASE_URL,
         timeout=timeout,
         max_retries=0,
     )
 
 
-def _require_key():
-    if not os.getenv("BASETEN_API_KEY"):
-        pytest.skip("BASETEN_API_KEY is not configured.")
+def _skip_if_provider_unreachable(exc: Exception) -> None:
+    """Network/DNS/TLS unavailability is an environment skip, not a code bug."""
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        pytest.skip(f"Muse Spark endpoint is unreachable in this environment: {type(exc).__name__}")
+    if isinstance(exc, RuntimeError) and (
+        "Could not contact the Muse Spark provider" in str(exc)
+        or "request timed out" in str(exc)
+    ):
+        pytest.skip(f"Muse Spark endpoint is unreachable in this environment: {exc}")
 
 
 def test_muse_spark_connectivity():
     """A minimal round-trip: the endpoint must return usable text."""
-    _require_key()
-    response = _client().chat.completions.create(
-        model=ask_muse.MODEL,
-        messages=[{"role": "user", "content": "Reply with exactly: Hello World"}],
-        stream=False,
-        max_tokens=64,
-    )
+    api_key = _require_key()
+    try:
+        response = _client(api_key).chat.completions.create(
+            model=ask_muse.MODEL,
+            messages=[{"role": "user", "content": "Reply with exactly: Hello World"}],
+            stream=False,
+            max_tokens=64,
+        )
+    except (APIConnectionError, APITimeoutError) as exc:
+        _skip_if_provider_unreachable(exc)
+        raise
 
     if not response.choices:
         pytest.fail("Muse Spark returned no response choices.")
@@ -73,7 +100,11 @@ def test_muse_spark_structured_report():
         ],
     }
 
-    report = ask_muse.generate_interpretation(context)
+    try:
+        report = ask_muse.generate_interpretation(context)
+    except (APIConnectionError, APITimeoutError, RuntimeError) as exc:
+        _skip_if_provider_unreachable(exc)
+        raise
 
     assert isinstance(report, dict)
     structured = ask_muse.validate_report(report["structured"])

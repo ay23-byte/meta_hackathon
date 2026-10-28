@@ -187,19 +187,32 @@ def fit_linear(x, y, weights=None, *, x_label="x", y_label="y") -> FitResult:
 
     # Weighted least squares in centred coordinates (avoids catastrophic
     # cancellation for large X offsets, e.g. timestamps near 1e9).
-    sw = float(np.sum(w))
-    x_bar = float(np.average(x_fit, weights=w))
-    y_bar = float(np.average(y_fit, weights=w))
-    dx = x_fit - x_bar
-    sxx = float(np.sum(w * dx**2))
-    sxy = float(np.sum(w * dx * (y_fit - y_bar)))
+    with np.errstate(all="ignore"):
+        sw = float(np.sum(w))
+        x_bar = float(np.average(x_fit, weights=w))
+        y_bar = float(np.average(y_fit, weights=w))
+        dx = x_fit - x_bar
+        sxx = float(np.sum(w * dx**2))
+        sxy = float(np.sum(w * dx * (y_fit - y_bar)))
     if not np.isfinite(sxx) or sxx <= 0:
         return _failure(MODEL_LINEAR, "Weighted X variance is not positive and finite.",
                         n_observations=n, n_excluded=n_excluded)
-    slope = sxy / sxx
-    intercept = y_bar - slope * x_bar
-    fitted = slope * x_fit + intercept
-    residuals = y_fit - fitted
+    with np.errstate(all="ignore"):
+        slope = sxy / sxx
+        intercept = y_bar - slope * x_bar
+        fitted = slope * x_fit + intercept
+        residuals = y_fit - fitted
+    if not (np.isfinite(slope) and np.isfinite(intercept)
+            and np.all(np.isfinite(fitted)) and np.all(np.isfinite(residuals))):
+        # Large magnitudes can overflow the centred sums even though every
+        # input is finite. A NaN slope must never be reported as a successful
+        # fit (Phase D regression: synthetic y ~ 1e308).
+        return _failure(
+            MODEL_LINEAR,
+            "The fit produced non-finite parameters or predictions; measurements "
+            "may be too large or too closely spaced.",
+            n_observations=n, n_excluded=n_excluded,
+        )
     metrics = _metrics(y_fit, fitted, residuals, 2, w)
 
     sigma2 = metrics.get("reduced_chi2")
@@ -413,17 +426,39 @@ def fit_nonlinear(model: str, x, y, weights=None, *, x_label="x", y_label="y",
     )
 
 
+def _has_nonfinite_numbers(result: FitResult) -> bool:
+    """Detect NaN/inf in a successful fit's parameters, metrics or residuals."""
+    values = [value for value in result.parameters.values()
+              if isinstance(value, (int, float))]
+    values += [value for value in result.metrics.values()
+               if isinstance(value, (int, float))]
+    if not all(math.isfinite(float(value)) for value in values):
+        return True
+    return result.residuals is not None and not np.all(np.isfinite(result.residuals))
+
+
 def fit_model(model: str, x, y, weights=None, *, degree: int = 2,
               x_label="x", y_label="y") -> FitResult:
     """Dispatch to the requested model. Unknown models fail gracefully."""
     if model == MODEL_LINEAR:
-        return fit_linear(x, y, weights, x_label=x_label, y_label=y_label)
-    if model == MODEL_POLYNOMIAL:
-        return fit_polynomial(x, y, degree, weights, x_label=x_label, y_label=y_label)
-    if model in _NONLINEAR:
-        return fit_nonlinear(model, x, y, weights, x_label=x_label, y_label=y_label)
-    return _failure(model, f"Unknown model '{model}'. Choose one of: "
-                    + ", ".join(MODEL_SPECS) + ".")
+        result = fit_linear(x, y, weights, x_label=x_label, y_label=y_label)
+    elif model == MODEL_POLYNOMIAL:
+        result = fit_polynomial(x, y, degree, weights, x_label=x_label, y_label=y_label)
+    elif model in _NONLINEAR:
+        result = fit_nonlinear(model, x, y, weights, x_label=x_label, y_label=y_label)
+    else:
+        return _failure(model, f"Unknown model '{model}'. Choose one of: "
+                        + ", ".join(MODEL_SPECS) + ".")
+    # Defence in depth: no successful FitResult may carry non-finite numbers.
+    if result.success and _has_nonfinite_numbers(result):
+        return _failure(
+            result.model,
+            "The fit produced non-finite results; measurements may be too large "
+            "or too closely spaced for reliable floating-point computation.",
+            n_observations=result.n_observations, n_excluded=result.n_excluded,
+            warnings=result.warnings,
+        )
+    return result
 
 
 def suggest_models(x, y) -> list[dict]:

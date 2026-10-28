@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import sys
 import zipfile
 from pathlib import Path
@@ -21,9 +20,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
 import ask_muse
+import provider_config
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
@@ -36,7 +35,13 @@ from fitting_core import (
     predict_with_flags,
     suggest_models,
 )
-from result_schema import ai_context, build_result, export_bundle, markdown_report
+from result_schema import (
+    ai_context,
+    build_result,
+    export_bundle,
+    markdown_report,
+    safe_archive_name,
+)
 from statistics_core import (
     correlation,
     covariance,
@@ -47,7 +52,6 @@ from statistics_core import (
 from visualization_core import PLOT_TYPES, build_chart, render_png
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
 SAMPLE = ROOT / "data" / "sample_voltage_current.csv"
 EXAMPLES = sorted((ROOT / "data" / "examples").glob("*.csv")) if (ROOT / "data" / "examples").exists() else []
 
@@ -105,10 +109,9 @@ def _hash(payload) -> str:
 def _safe_error(exc: Exception) -> str:
     """Never print a traceback to the UI; never echo an API key."""
     message = " ".join(str(exc).split())[:MAX_SHORT_TEXT]
-    key = os.getenv("BASETEN_API_KEY", "")
-    if key:
-        message = message.replace(key, "[redacted]")
-    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+    safe = provider_config.redact(f"{type(exc).__name__}: {message}" if message
+                                  else type(exc).__name__)
+    return safe
 
 
 def step_header(letter: str, title: str, caption: str):
@@ -154,6 +157,14 @@ st.caption(
     "Upload any delimited numeric dataset, choose the columns and model yourself, "
     "and export a fully reproducible record. Nothing is assumed about your scientific domain."
 )
+with st.expander("First time here? Quick start"):
+    st.markdown(
+        "1. Upload a `.csv`, `.tsv` or `.txt` file, or choose a bundled synthetic example.\n"
+        "2. Review validation/cleaning, then set X, Y, units and the model.\n"
+        "3. Read the computed statistics, plots and fit diagnostics.\n"
+        "4. Export CSV / JSON / ZIP. Live AI needs a key and an explicit button press; "
+        "the bounded agent needs its own consent checkbox."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +739,14 @@ st.caption(f"Provider status: {provider['message']} "
            f"mock_available={str(provider['offline_mock_available']).lower()}).")
 
 
+def _current_report():
+    """Return a validated report only when it belongs to the current analysis."""
+    state = st.session_state.get("ai_state")
+    if isinstance(state, dict) and state.get("hash") == context_hash:
+        return state.get("wrapper")
+    return None
+
+
 def store_validated_report(wrapper, titles):
     """Second, local validation of ANY report (live or mock) before storage."""
     structured = ask_muse.validate_report(
@@ -735,53 +754,92 @@ def store_validated_report(wrapper, titles):
         allowed_evidence_ids=context.get("result_ids"),
     )
     if structured is None:
+        st.session_state["ai_last_error"] = "invalid report"
         st.error("Report rejected: incomplete report or strict schema validation "
                  "failure; nothing was stored.")
         return
     wrapper["structured"] = structured
     st.session_state["ai_state"] = {"hash": context_hash, "wrapper": wrapper}
+    st.session_state.pop("ai_last_error", None)
     result["ai"] = wrapper
     st.rerun()
 
 
 if st.button("Generate evidence-grounded interpretation", type="primary"):
-    if not os.getenv("BASETEN_API_KEY", "").strip():
+    # Three guards against accidental duplicate provider calls: an existing
+    # report for this exact context, a per-session in-flight flag, and the
+    # explicit button action itself. A page rerun never calls the provider.
+    if _current_report():
+        st.info("A validated report for this exact analysis is already available; "
+                "no duplicate provider request was sent.")
+    elif not provider_config.get_api_key():
         st.warning("BASETEN_API_KEY is not set; AI interpretation is unavailable. "
                    "All deterministic results and exports remain available. "
                    "Use the labelled offline MOCK button below for a deterministic preview.")
+    elif st.session_state.get("ai_request_in_flight"):
+        st.info("An AI request is already in progress for this session. "
+                "Wait for it to finish before retrying.")
     else:
+        st.session_state["ai_request_in_flight"] = True
+        st.session_state.pop("ai_last_error", None)
         try:
-            titles = list(effective_titles)
-            if report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
-                wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
-            else:
-                wrapper = ask_muse.generate_interpretation(
-                    context, section_titles=titles, profile=report_profile
-                )
+            with st.spinner("Requesting Muse Spark report..."):
+                titles = list(effective_titles)
+                if report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
+                    wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
+                else:
+                    wrapper = ask_muse.generate_interpretation(
+                        context, section_titles=titles, profile=report_profile
+                    )
         except (ValueError, RuntimeError) as exc:
+            st.session_state["ai_last_error"] = _safe_error(exc)
             st.error(f"Muse Spark request failed: {_safe_error(exc)}")
             st.info("Deterministic results and exports are unaffected. The offline MOCK "
                     "button below gives a labelled template preview, NOT an AI response.")
         except Exception as exc:
+            st.session_state["ai_last_error"] = _safe_error(exc)
             st.error(f"Muse Spark request failed: {_safe_error(exc)}")
             st.info("Deterministic results and exports are unaffected. The offline MOCK "
                     "button below gives a labelled template preview, NOT an AI response.")
         else:
             store_validated_report(wrapper, titles)
+        finally:
+            st.session_state.pop("ai_request_in_flight", None)
 
 if st.button("Preview deterministic OFFLINE MOCK report (no API key, NOT AI)",
              key="offline_mock_report"):
-    try:
-        wrapper = ask_muse.generate_mock_report(
-            context, section_titles=list(effective_titles),
-            profile=report_profile, research_question=question,
-        )
-    except (ValueError, RuntimeError) as exc:
-        st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
-    except Exception as exc:
-        st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+    if _current_report():
+        st.info("A report for this exact analysis is already available; "
+                "no duplicate mock was generated.")
     else:
-        store_validated_report(wrapper, list(effective_titles))
+        try:
+            wrapper = ask_muse.generate_mock_report(
+                context, section_titles=list(effective_titles),
+                profile=report_profile, research_question=question,
+            )
+        except (ValueError, RuntimeError) as exc:
+            st.session_state["ai_last_error"] = _safe_error(exc)
+            st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+        except Exception as exc:
+            st.session_state["ai_last_error"] = _safe_error(exc)
+            st.error(f"Offline mock report could not be generated: {_safe_error(exc)}")
+        else:
+            store_validated_report(wrapper, list(effective_titles))
+
+current_report = _current_report()
+if current_report:
+    is_mock_report = bool(current_report.get("is_mock")
+                          or current_report.get("source") == "offline_mock")
+    ai_status = ("offline MOCK generated (NOT AI)" if is_mock_report
+                 else "succeeded (live AI report, unverified hypotheses)")
+elif st.session_state.get("ai_request_in_flight"):
+    ai_status = "running"
+elif st.session_state.get("ai_last_error"):
+    ai_status = "failed"
+else:
+    ai_status = "not run"
+st.caption(f"AI status: {ai_status}. Live calls require the explicit button above; "
+           "the agent has a separate consent checkbox. Local results survive AI failure.")
 
 if result.get("ai"):
     wrapper = result["ai"]
@@ -838,7 +896,7 @@ if agent_consent:
     with st.spinner("Running bounded agent workflow..."):
         try:
             agent_run = AnalysisOrchestrator(OrchestratorConfig(
-                use_ai=bool(agent_use_ai and os.getenv("BASETEN_API_KEY", "").strip()),
+                use_ai=bool(agent_use_ai and provider_config.get_api_key()),
                 user_confirmed=agent_destructive,
                 research_question=question,
             )).run(load)
@@ -910,7 +968,7 @@ try:
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload in exports.items():
-            archive.writestr(name, payload)
+            archive.writestr(safe_archive_name(name), payload)
     zip_payload = zip_buffer.getvalue()
 except Exception as exc:
     st.error(f"Could not build exports: {_safe_error(exc)}")

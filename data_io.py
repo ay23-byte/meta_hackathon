@@ -19,6 +19,7 @@ import pandas as pd
 
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_MAX_ROWS = 200_000
+ALLOWED_SUFFIXES = frozenset({".csv", ".tsv", ".txt"})
 
 # latin-1 is last: it decodes any byte sequence, but can silently mojibake.
 ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
@@ -191,6 +192,13 @@ def read_csv_robust(
 
     if not raw or not raw.strip():
         raise DataImportError("The file is empty or contains only whitespace.")
+    name = str(source_name)
+    suffix = Path(name).suffix.casefold()
+    if suffix and suffix not in ALLOWED_SUFFIXES:
+        raise DataImportError(
+            f"Unsupported file extension '{suffix}' for {name}. "
+            "Use a delimited .csv, .tsv or .txt file."
+        )
     if len(raw) > max_bytes:
         raise DataImportError(
             f"The file has {len(raw):,} bytes, which exceeds the "
@@ -242,7 +250,7 @@ def read_csv_robust(
         encoding=encoding,
         original_bytes=raw,
         sha256=hashlib.sha256(raw).hexdigest(),
-        source_name=str(source_name),
+        source_name=name,
         header_labels=header_labels,
         duplicate_headers=duplicate_headers,
         warnings=warnings,

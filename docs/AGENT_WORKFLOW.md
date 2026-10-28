@@ -242,6 +242,20 @@ The baseline workflow above remains valid; these are the deltas.
   with actor `ai`, status `rejected`/`unavailable`; the deterministic
   conclusion is retained. No mock is substituted into the live provider path.
 
-Verification on this branch: `pytest -q` → 348 passed, 2 skipped;
+Verification after the earlier master-prompt phase: `pytest -q` → 348 passed, 2 skipped;
 `run_agent_demo.py --case all --strict` → 7/7 expected states. Live
 Muse-proposed planning remains unverified without `BASETEN_API_KEY`.
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+Agent/provider configuration now comes from `provider_config.get_api_key()`
+rather than direct `os.getenv` calls, and the planner's OpenAI client uses
+`max_retries=0` to avoid duplicate plan requests. The 13-tool allowlist,
+A-E demos and strict plan validation are unchanged and still pass
+`run_agent_demo.py --case all --strict` (7/7). A fake developer `.env` no
+longer changes offline test behaviour: `tests/conftest.py` disables dotenv
+fallback for every non-live test. Final offline suite: **419 passed,
+2 skipped**; live Muse-proposed planning remains unverified without a key.

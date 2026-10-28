@@ -3,7 +3,6 @@
 
 import hashlib
 import json
-import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -13,8 +12,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
+import provider_config
 from analysis_core import (
     analyze_linear,
     detect_candidate_columns,
@@ -24,7 +23,6 @@ from analysis_core import (
 )
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
 
 # Bounds on untrusted input. These protect both the UI and the AI context.
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024       # 5 MiB of CSV
@@ -299,7 +297,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("AI provider status")
-    _api_key_configured = bool(os.getenv("BASETEN_API_KEY"))
+    _api_key_configured = provider_config.api_key_status()["present"]
     if _api_key_configured:
         st.success("Muse Spark via Baseten is configured.")
     else:
@@ -680,13 +678,30 @@ st.caption(
     "Baseten. The raw CSV and API key are not intentionally sent as context."
 )
 
+current_hash = make_context_hash(record, explorer_records)
+existing_report = (
+    st.session_state.get("lablens_ai_report")
+    if st.session_state.get("lablens_ai_context_hash") == current_hash
+    else None
+)
+
 if st.button("Generate evidence-grounded interpretation", type="primary"):
-    if not os.getenv("BASETEN_API_KEY"):
+    # A rerun alone never calls the provider. The in-flight flag and the
+    # context-bound existing report both prevent duplicate paid requests.
+    if existing_report:
+        st.info("A validated report for this exact analysis is already available; "
+                "no duplicate provider request was sent.")
+    elif not provider_config.get_api_key():
         st.warning(
             "BASETEN_API_KEY is not set. Numerical analysis and downloads "
             "remain available."
         )
+    elif st.session_state.get("lablens_ai_request_in_flight"):
+        st.info("An AI request is already in progress for this session. "
+                "Wait for it to finish before retrying.")
     else:
+        st.session_state["lablens_ai_request_in_flight"] = True
+        st.session_state.pop("lablens_ai_last_error", None)
         try:
             from ask_muse import generate_interpretation
 
@@ -719,25 +734,33 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
                 ai_report = generate_interpretation(context)
 
             if validate_ai_report(ai_report):
-                report_hash = make_context_hash(record, explorer_records)
                 st.session_state["lablens_ai_report"] = ai_report
-                st.session_state["lablens_ai_context_hash"] = report_hash
+                st.session_state["lablens_ai_context_hash"] = current_hash
+                st.session_state.pop("lablens_ai_last_error", None)
             else:
+                st.session_state["lablens_ai_last_error"] = "incomplete report"
                 st.error("Muse Spark returned an incomplete report.")
 
         except Exception as exc:
-            message = str(exc)
-            secret = os.getenv("BASETEN_API_KEY", "")
-            if secret:
-                message = message.replace(secret, "[redacted]")
-            st.error(f"Muse Spark request failed: {message}")
+            st.session_state["lablens_ai_last_error"] = provider_config.redact(str(exc))
+            st.error(f"Muse Spark request failed: {provider_config.redact(str(exc))}")
+        finally:
+            st.session_state.pop("lablens_ai_request_in_flight", None)
 
-current_hash = make_context_hash(record, explorer_records)
 ai_report = (
     st.session_state.get("lablens_ai_report")
     if st.session_state.get("lablens_ai_context_hash") == current_hash
     else None
 )
+if ai_report:
+    ai_status = "succeeded (unverified AI hypotheses)"
+elif st.session_state.get("lablens_ai_request_in_flight"):
+    ai_status = "running"
+elif st.session_state.get("lablens_ai_last_error"):
+    ai_status = "failed"
+else:
+    ai_status = "not run"
+st.caption(f"AI status: {ai_status}. Calculations, plots and exports do not depend on AI.")
 
 # Reuse the sanitized structure for rendering AND export so no untrusted
 # provider keys can reach the UI or the downloaded record.

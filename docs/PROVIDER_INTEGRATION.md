@@ -8,10 +8,10 @@ demo, a submission, or a report.
 
 | Setting | Source | Default |
 | --- | --- | --- |
-| `BASETEN_API_KEY` | local `.env` (gitignored) or environment | none — AI disabled |
+| `BASETEN_API_KEY` | `provider_config.py`: process environment first, then gitignored `.env` via `dotenv_values` | none — AI disabled |
 | `BASETEN_MODEL` | optional environment override | `meta-models/muse-spark-open` |
 | Endpoint | fixed in `ask_muse.BASE_URL` | `https://inference.baseten.co/v1` |
-| Timeout / retries | fixed | 90 s, at most 1 SDK retry |
+| Timeout / retries | fixed | 90 s; SDK retries disabled; adapter allows at most 2 bounded transient retries |
 | Completion budget | `MAX_COMPLETION_TOKENS` | 4096 tokens |
 
 The default model string is the one published in Meta's hosted-provider
@@ -181,8 +181,8 @@ this environment because no `BASETEN_API_KEY` was configured. See
   `MAX_TRANSIENT_RETRIES = 2`; exponential backoff from 0.25 s. Transport
   errors with no HTTP status get the same bound. 400 still triggers the single
   conservative-shape fallback; other 4xx errors fail immediately. Raw exception
-  text is never surfaced. The OpenAI client keeps `max_retries=1`, so worst-case
-  attempts remain finite.
+  text is never surfaced. The OpenAI client now uses `max_retries=0` to avoid duplicate SDK-level
+  requests; only the adapter's bounded local retries remain.
 - **Honest status.** `provider_status()` returns `api_key_configured`,
   `key_source`, `env_file_present`, `mode`, `live_call_attempted=False`,
   `live_verified=False`, `offline_mock_available=True` and a message. It makes
@@ -197,3 +197,32 @@ this environment because no `BASETEN_API_KEY` was configured. See
   `pytest -m live -q` skips both live tests. Fake-client tests verify our
   request/response contract, retries and schema, but **do not verify Baseten
   reachability, entitlement, quota or a real Muse Spark response**.
+
+
+---
+
+## Hardening update (27 Oct 2026, branch `arena/10a318e1-meta-hackathon`)
+
+- **Root cause fixed:** `app.py`, `general_app.py` and `ask_muse.py` previously
+  called `load_dotenv()` at import time. A developer `.env` could repopulate
+  `BASETEN_API_KEY` after a test deleted it, causing four UI missing-key tests
+  to fail and two live tests to attempt real network calls during ordinary
+  `pytest`. All three now use `provider_config.py`, which never mutates
+  `os.environ`.
+- **Precedence:** a real process environment variable always wins over `.env`.
+  `LABLENS_DISABLE_DOTENV=1` disables local file fallback for tests/CI.
+- **Validation:** missing, blank and obvious placeholder keys are reported as
+  `key_state="missing"|"placeholder"` and never trigger a client.
+- **Retries:** the OpenAI client now uses `max_retries=0`; only
+  `ask_muse._request_with_bounded_retries()` retries transient 408/429/5xx or
+  transport errors, at most `MAX_TRANSIENT_RETRIES=2` additional attempts.
+  401/403/404/400 fail immediately with actionable messages.
+- **403 nuance:** `describe_provider_error()` inspects safe provider body codes
+  to distinguish credential rejection, permission denial, model access and
+  quota hints. Raw exception text is never returned.
+- **Live tests:** root `test_muse.py` requires `pytest --run-live -m live -v`.
+  Without `--run-live`, a usable key, or network reachability, the two tests
+  skip. `pytest -m live -q` → 2 skipped, 419 deselected in this workspace.
+- **Verification:** full offline suite **419 passed, 2 skipped**; same result
+  with a fake local `.env` present; `ruff` and `compileall` clean. Live Baseten
+  reachability remains **unverified** because no real key is configured here.

@@ -18,20 +18,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 import ask_muse
+import provider_config
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
 from domain_modules import apply_domain
 from fitting_core import MODEL_SPECS, compare_models, fit_model, suggest_models
-from result_schema import ai_context, build_result, export_bundle
+from result_schema import ai_context, build_result, export_bundle, safe_archive_name
 from statistics_core import (
     correlation,
     covariance,
@@ -220,7 +220,7 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile,
                     research_question=research_question,
                 )
-            elif not os.getenv("BASETEN_API_KEY", "").strip():
+            elif not provider_config.get_api_key():
                 result["ai_note"] = ("AI was requested but BASETEN_API_KEY is not configured; "
                                      "deterministic analysis is complete. Use --ai-mock for a "
                                      "clearly labelled offline preview.")
@@ -248,7 +248,7 @@ def analyze_csv(
     exports = export_bundle(result, cleaned_frame=cleaned.working,
                             descriptive_table=stats_table, charts=chart_files)
     for name, payload in exports.items():
-        target = destination / name
+        target = destination / safe_archive_name(name)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
     return result
@@ -341,7 +341,7 @@ def main(argv=None):
     if (result.get("ai") or {}).get("is_mock"):
         print("OFFLINE MOCK report written (deterministic template, NOT Muse Spark, NOT AI).")
     if args.agent:
-        use_ai = bool(args.agent_use_ai and os.getenv("BASETEN_API_KEY", "").strip())
+        use_ai = bool(args.agent_use_ai and provider_config.get_api_key())
         try:
             agent_summary = run_agent(
                 args.csv, args.output_dir, use_ai=use_ai,

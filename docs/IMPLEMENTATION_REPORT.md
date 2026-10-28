@@ -234,3 +234,38 @@ GitHub Actions PR #4: all four matrix jobs passed (Ubuntu/Windows x Python
 Still unverified: real Baseten reachability and a genuinely Muse-proposed plan
 driving a live agent run. No `BASETEN_API_KEY` was configured in this sandbox;
 the two live tests remain skipped. Do not claim live integration in the pitch.
+
+
+---
+
+## Live-demo hardening phase (27 Oct 2026) — measured delta
+
+Baseline on this branch: 348 passed, 2 skipped. A fake local `.env` reproduced
+the six historical failures (4 UI missing-key + 2 live network). Root cause:
+import-time `load_dotenv` in three modules mutated `os.environ`.
+
+After the fix:
+
+```text
+ruff check .                              -> All checks passed
+compileall                               -> exit 0
+pytest -q                                -> 419 passed, 2 skipped in 86.06 s
+pytest -q with fake .env present          -> 419 passed, 2 skipped
+pytest -m live -q                        -> 2 skipped, 419 deselected
+pytest --run-live -m live -q (no key)    -> 2 skipped
+run_agent_demo.py --case all --strict    -> 7/7 OK
+coverage (12 core modules)               -> 92% (2,103/2,276)
+Streamlit HTTP smoke                     -> 200 / 200
+```
+
+New modules/tests: `provider_config.py`, `tests/conftest.py`, five new test
+files, synthetic demo dataset and `docs/LIVE_DEMO_GUIDE.md`. Live Baseten
+remains unverified without a real key. See `docs/HARDENING_REPORT.md`.
+
+
+## CI verification after hardening
+
+PR #5 ran `.github/workflows/ci.yml`; `gh pr checks 5 --watch` reported all
+four matrix jobs passing (Ubuntu/Windows x Python 3.11/3.12). This verifies
+lint and the offline test suite on both operating systems, not live Muse Spark
+access.

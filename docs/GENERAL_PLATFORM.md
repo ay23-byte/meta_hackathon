@@ -149,3 +149,15 @@ verification. `markdown_report()` section 10 now has distinct headings and
 disclaimers for AI-generated text and a mock, and prints computed result IDs
 for claims. The CLI exposes the same capabilities through `--question`,
 `--report-profile`, `--ai-mock` and `--agent-question`.
+
+
+---
+
+## Hardening update (27 Oct 2026)
+
+`ai_context()` and the rest of the result schema are unchanged, but every
+export name now passes through `safe_archive_name()` before JSON/CSV/Markdown
+or ZIP generation. `provider_config.py` replaces import-time `load_dotenv`
+calls in the UI and CLI. The step-F live AI button and the labelled OFFLINE
+MOCK button are idempotent for an unchanged analysis context. Final measured
+suite: **419 passed, 2 skipped**; see `docs/HARDENING_REPORT.md`.
