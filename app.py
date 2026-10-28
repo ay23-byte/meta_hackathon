@@ -373,7 +373,7 @@ if len(raw) > MAX_SOURCE_ROWS:
 
 st.subheader("1 · Inspect and configure")
 st.caption(f"{source} · {len(raw):,} source rows · {len(raw.columns)} columns")
-st.dataframe(raw.head(8), width="stretch", hide_index=True)
+st.dataframe(raw.head(8), use_container_width=True, hide_index=True)
 
 description = st.text_input(
     "Dataset description or provenance (optional)",
@@ -591,7 +591,7 @@ with st.expander("Model assumptions and limitations"):
     )
 
 with st.expander("Retained data, fitted values, and residuals"):
-    st.dataframe(clean, width="stretch", hide_index=True)
+    st.dataframe(clean, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------
 # 6. Hypothetical measurement explorer
@@ -799,7 +799,7 @@ if ai_structure:
     claims = ai_structure["claims"]
     if claims:
         st.markdown("**Evidence-linked claims**")
-        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(claims), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------
 # 9. Export report, cleaned CSV, and JSON

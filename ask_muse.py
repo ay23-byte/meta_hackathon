@@ -6,7 +6,7 @@ key. This module owns the *only* AI report schema, so the dashboard and the
 CLI never drift apart. ``validate_report`` is deliberately strict because
 its result is rendered, stored in the session and written into exports.
 """
-
+from pathlib import Path
 import copy
 import json
 import math
@@ -15,7 +15,8 @@ import time
 
 from openai import OpenAI
 
-import provider_config
+ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / ".env")
 
 # Official Baseten Model API identifier documented by Meta and Baseten.
 # Selected hackathon accounts may be told to use a dated variant; allow an
