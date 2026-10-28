@@ -29,6 +29,7 @@ PLOT_HEATMAP = "correlation_heatmap"
 PLOT_TIME_SERIES = "time_series"
 PLOT_GROUPED_BAR = "grouped_bar"
 PLOT_RESIDUALS = "residuals"
+PLOT_RESIDUAL_FITTED = "residuals_vs_fitted"
 PLOT_DISTRIBUTION = "distribution"
 PLOT_ERRORBAR = "errorbar"
 
@@ -41,6 +42,7 @@ PLOT_TYPES = {
     PLOT_TIME_SERIES: "Time series",
     PLOT_GROUPED_BAR: "Grouped comparison (mean)",
     PLOT_RESIDUALS: "Residual plot (requires a fit)",
+    PLOT_RESIDUAL_FITTED: "Residuals vs fitted values (requires a fit)",
     PLOT_DISTRIBUTION: "Distribution / density",
     PLOT_ERRORBAR: "Points with error bars",
 }
@@ -166,31 +168,51 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
     if plot_type not in PLOT_TYPES:
         return spec(None, frame, [], warnings=[f"Unknown plot type '{plot_type}'."])
 
-    # ---- Residuals come from the fit, not from the original frame ----
-    if plot_type == PLOT_RESIDUALS:
+    # Residuals are paired with the exact model inputs used by the fit.
+    if plot_type in (PLOT_RESIDUALS, PLOT_RESIDUAL_FITTED):
         if fit_result is None or not getattr(fit_result, "success", False):
             return spec(None, pd.DataFrame(), [], warnings=["Fit a model before plotting residuals."])
-        residual_frame = pd.DataFrame({
-            "x": np.asarray(fit_result.x_fit, dtype=float),
-            "residual": np.asarray(fit_result.residuals, dtype=float),
-        }).replace([np.inf, -np.inf], np.nan).dropna()
+        x_fit = np.asarray(fit_result.x_fit, dtype=float)
+        residual = np.asarray(fit_result.residuals, dtype=float)
+        if x_fit.ndim != 1 or residual.ndim != 1 or len(x_fit) != len(residual):
+            return spec(None, pd.DataFrame(), [], warnings=["The fit has mismatched residual and X values."])
+        axis_title = x_label or "X"
+        if plot_type == PLOT_RESIDUAL_FITTED:
+            from fitting_core import predict_with_flags
+
+            prediction = predict_with_flags(fit_result, x_fit)
+            if not prediction.get("valid"):
+                return spec(None, pd.DataFrame(), [], warnings=["Fitted values are unavailable for this model."])
+            x_fit = np.asarray(prediction["predicted"], dtype=float)
+            if len(x_fit) != len(residual):
+                return spec(None, pd.DataFrame(), [], warnings=["The fit has mismatched predictions and residuals."])
+            axis_title = f"Fitted {y_label or 'Y'}"
+        residual_frame = pd.DataFrame({"x": x_fit, "residual": residual}).replace(
+            [np.inf, -np.inf], np.nan).dropna()
+        valid_count = len(residual_frame)
         if residual_frame.empty:
             return spec(None, residual_frame, [], warnings=["The fit produced no finite residuals."])
+        residual_frame = residual_frame.head(MAX_CHART_ROWS)
+        residual_title = _axis_label("Residual (observed - fitted)", config.get("unit_y"))
         points = alt.Chart(residual_frame).mark_circle(size=55, opacity=0.8).encode(
-            x=alt.X("x:Q", title=x_col or "X"),
-            y=alt.Y("residual:Q", title="Residual (observed - fitted)"),
-            tooltip=[alt.Tooltip("x:Q", title=x_col or "X"),
-                     alt.Tooltip("residual:Q", format=".6g")],
+            x=alt.X("x:Q", title=axis_title, scale=alt.Scale(zero=False)),
+            y=alt.Y("residual:Q", title=residual_title),
+            tooltip=[alt.Tooltip("x:Q", title=axis_title),
+                     alt.Tooltip("residual:Q", title=residual_title, format=".6g")],
         )
         zero = alt.Chart(pd.DataFrame({"y": [0.0]})).mark_rule(
             color="#b22222", strokeDash=[5, 4]
         ).encode(y="y:Q")
+        warnings = ([f"{fit_result.n_excluded} row(s) were excluded from the fit."]
+                    if fit_result.n_excluded else [])
+        if valid_count > MAX_CHART_ROWS:
+            warnings.append(f"Only the first {MAX_CHART_ROWS:,} finite residuals are displayed.")
         return spec(
             (points + zero).properties(width="container", height=360), residual_frame,
-            [x_col or "X"],
-            notes=["Random scatter around zero supports the chosen model; visible structure indicates lack of fit."],
-            warnings=[f"{fit_result.n_excluded} row(s) were excluded from the fit."]
-            if fit_result.n_excluded else [],
+            [y_col or "Y"] if plot_type == PLOT_RESIDUAL_FITTED else [x_col or "X"],
+            notes=["Residuals are observed minus fitted. Patterns may indicate model inadequacy or "
+                   "changing spread; an apparently random pattern does not prove model assumptions."],
+            warnings=warnings,
         )
 
     # ---- Correlation heatmap uses all selected numeric columns ----
@@ -479,11 +501,11 @@ def render_png(plot_type: str, frame: pd.DataFrame, config: dict) -> bytes:
             ax.boxplot([data.loc[data["group"].astype(str) == label, "value"].to_numpy()
                         for label in labels], tick_labels=labels)
             ax.set_ylabel(y_label or x_label)
-        elif plot_type == PLOT_RESIDUALS:
+        elif plot_type in (PLOT_RESIDUALS, PLOT_RESIDUAL_FITTED):
             ax.scatter(data["x"], data["residual"], s=26, alpha=0.8)
             ax.axhline(0, color="#b22222", linestyle="--")
-            ax.set_xlabel(x_col or "X")
-            ax.set_ylabel("Residual (observed - fitted)")
+            ax.set_xlabel(f"Fitted {y_label or 'Y'}" if plot_type == PLOT_RESIDUAL_FITTED else x_label or "X")
+            ax.set_ylabel(_axis_label("Residual (observed - fitted)", config.get("unit_y")))
         elif plot_type == PLOT_GROUPED_BAR:
             ax.bar(data["group"].astype(str), data["mean"], color="#2b6cb0")
             ax.set_ylabel(f"Mean of {y_col}")
