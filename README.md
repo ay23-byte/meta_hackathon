@@ -201,6 +201,13 @@ python analyze_dataset.py data/sample_voltage_current.csv \
 Synthetic example datasets are documented in `data/examples/README.md`. They
 are computer-generated, **not** experimental evidence.
 
+## Offline research notes
+
+The optional research context provides explicitly user-confirmed Ohmic theory
+notes, reliability cautions, and model-comparison curves without a provider.
+See [docs/RESEARCH_ASSISTANT.md](docs/RESEARCH_ASSISTANT.md) for scope and
+limitations, including features not yet implemented.
+
 ## Current readiness
 
 See [docs/HACKATHON_READINESS.md](docs/HACKATHON_READINESS.md) for the latest

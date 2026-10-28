@@ -513,6 +513,23 @@ def markdown_report(result: dict) -> str:
         lines += ["", "## 10. AI-generated interpretation", "",
                   "Not requested, or the provider was unavailable. All deterministic results above "
                   "are complete without AI."]
+    research = result.get("research") or {}
+    if research:
+        context = research.get("context") or {}
+        lines += ["", "## 11. Research context and offline learning", "",
+                  "User-supplied context and assumptions are not independently verified; this is not AI output."]
+        for key, label in (("title", "Title"), ("discipline", "Discipline"),
+                           ("description", "Description"), ("apparatus", "Apparatus"),
+                           ("conditions", "Conditions"), ("known_equation", "User-supplied equation"),
+                           ("level", "Explanation level")):
+            if context.get(key):
+                lines.append(f"- {label}: {_fmt(context[key])}")
+        for key, label in (("theory", "Theory and learning"), ("reliability", "Reliability and uncertainty")):
+            block = research.get(key) or {}
+            lines += ["", f"### {label}", ""]
+            for note in block.get("notes") or []:
+                lines.append(f"- {_markdown_text(note)}")
+        lines += ["", "External references were not retrieved or verified."]
     return "\n".join(lines) + "\n"
 
 
