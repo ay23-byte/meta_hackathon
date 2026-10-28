@@ -58,7 +58,8 @@ def safe_unit(value, fallback):
 
 def md_inline(value):
     """Make untrusted text safe to place on one line of the Markdown report."""
-    text = " ".join(str(value).split())
+    import html
+    text = html.escape(" ".join(str(value).split()), quote=False)
     text = text.replace("\\", "\\\\").replace("`", "'").replace("|", "\\|")
     return text[:MAX_SHORT_TEXT]
 
@@ -845,12 +846,13 @@ are extrapolations and are not validated by these data.
 if ai_structure:
     report += "\n## Muse Spark interpretation\n\n"
     report += "AI-generated; not independently verified.\n\n"
-    report += json.dumps(
+    import html
+    report += "```json\n" + html.escape(json.dumps(
         ai_structure,
         indent=2,
         ensure_ascii=False,
         allow_nan=False,
-    )
+    ), quote=False).replace("```", "` ` `") + "\n```\n"
 
 exports = serialize_analysis_exports(record, clean, report)
 

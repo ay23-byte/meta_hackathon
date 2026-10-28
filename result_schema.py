@@ -8,9 +8,11 @@ separately under ``ai`` and is always labelled as model-generated.
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import math
+import re
 from datetime import datetime, timezone
 
 import numpy as np
@@ -66,15 +68,17 @@ def json_safe(value):
 
 
 def _csv_bytes(frame: pd.DataFrame) -> bytes:
-    """UTF-8 CSV with formula-injection-safe leading characters."""
+    """UTF-8 CSV with spreadsheet formula injection mitigated in cells and headers."""
+    def safe_cell(value):
+        if isinstance(value, str) and value.lstrip(" \t\r\n")[:1] in ("=", "+", "-", "@"):
+            return "'" + value
+        if isinstance(value, str) and value[:1] in ("\t", "\r", "\n"):
+            return "'" + value
+        return value
+
     buffer = io.StringIO(newline="")
-    safe = frame.copy()
-    for column in safe.columns:
-        if safe[column].dtype == object or str(safe[column].dtype).startswith("str"):
-            safe[column] = safe[column].map(
-                lambda value: ("'" + str(value)) if isinstance(value, str)
-                and value[:1] in ("=", "+", "-", "@") else value
-            )
+    safe = frame.map(safe_cell)
+    safe.columns = [safe_cell(column) for column in frame.columns]
     safe.to_csv(buffer, index=False, quoting=csv.QUOTE_MINIMAL)
     return buffer.getvalue().encode("utf-8-sig")
 
@@ -293,6 +297,13 @@ def ai_context(result: dict, *, max_chars: int = 28_000,
     return json_safe(context)
 
 
+def _markdown_text(value) -> str:
+    """Render untrusted data as text, not Markdown links, HTML or structure."""
+    text = " ".join(str(value).split())
+    text = html.escape(text, quote=False)
+    return re.sub(r"([\\`*_{}\[\]<>#|!])", r"\\\1", text)
+
+
 def _fmt(value) -> str:
     if value is None:
         return "not available"
@@ -300,7 +311,7 @@ def _fmt(value) -> str:
         return ", ".join(_fmt(item) for item in value)
     if isinstance(value, float):
         return f"{value:.6g}" if math.isfinite(value) else "not finite"
-    return str(value)
+    return _markdown_text(value)
 
 
 def markdown_report(result: dict) -> str:
@@ -344,7 +355,7 @@ def markdown_report(result: dict) -> str:
     ]
     for column in cleaning.get("columns", []) or []:
         lines.append(
-            f"- `{column.get('name')}`: missing={_fmt(column.get('missing'))}, "
+            f"- `{_markdown_text(column.get('name'))}`: missing={_fmt(column.get('missing'))}, "
             f"invalid={_fmt(column.get('invalid'))}, nonfinite={_fmt(column.get('nonfinite'))}, "
             f"coerced={_fmt(column.get('coerced'))}, valid={_fmt(column.get('valid'))}"
         )
@@ -353,7 +364,7 @@ def markdown_report(result: dict) -> str:
         if not isinstance(summary, dict):
             continue
         lines += [
-            f"### {column}",
+            f"### {_markdown_text(column)}",
             "",
             f"- n valid / total: {_fmt(summary.get('n_valid'))} / {_fmt(summary.get('n_total'))}",
             f"- Mean: {_fmt(summary.get('mean'))}; median: {_fmt(summary.get('median'))}",
@@ -390,7 +401,7 @@ def markdown_report(result: dict) -> str:
         ]
         errors = fit.get("parameter_errors") or {}
         for name, value in (fit.get("parameters") or {}).items():
-            lines.append(f"| {name} | {_fmt(value)} | {_fmt(errors.get(name))} |")
+            lines.append(f"| {_markdown_text(name)} | {_fmt(value)} | {_fmt(errors.get(name))} |")
         metrics = fit.get("metrics") or {}
         lines += [
             "",
@@ -416,21 +427,21 @@ def markdown_report(result: dict) -> str:
               f"- Module: {_fmt(domain.get('label'))}",
               f"- Description: {_fmt(domain.get('description'))}"]
     for assumption in domain.get("assumptions") or []:
-        lines.append(f"- Assumption: {assumption}")
+        lines.append(f"- Assumption: {_markdown_text(assumption)}")
     for item in domain.get("derived") or []:
         lines.append(f"- Computed: {_fmt(item.get('name'))} = {_fmt(item.get('value'))} "
                      f"{_fmt(item.get('unit') or '')} ({_fmt(item.get('source'))})")
     for hypothesis in domain.get("hypotheses") or []:
-        lines.append(f"- {hypothesis}")
+        lines.append(f"- {_markdown_text(hypothesis)}")
     for warning in domain.get("warnings") or []:
-        lines.append(f"- Limitation: {warning}")
+        lines.append(f"- Limitation: {_markdown_text(warning)}")
 
     lines += ["", "## 8. Figures", ""]
     for chart in result.get("visualizations") or []:
         lines.append(f"- {_fmt(chart.get('label'))}: {_fmt(chart.get('n_rows'))} rows plotted "
                      f"({_fmt(chart.get('file'))})")
         for warning in chart.get("warnings") or []:
-            lines.append(f"  - Caution: {warning}")
+            lines.append(f"  - Caution: {_markdown_text(warning)}")
 
     lines += ["", "## 9. Limitations and provenance", "",
               "- All numbers above were computed locally from the uploaded CSV; none were generated by an AI model.",
@@ -440,9 +451,9 @@ def markdown_report(result: dict) -> str:
               "- Correlation and fitted coefficients do not establish causation.",
               "- Results outside the fitted X range are extrapolations."]
     for note in result.get("notes") or []:
-        lines.append(f"- {note}")
+        lines.append(f"- {_markdown_text(note)}")
     for warning in result.get("warnings") or []:
-        lines.append(f"- {warning}")
+        lines.append(f"- {_markdown_text(warning)}")
 
     ai = result.get("ai")
     if ai:
@@ -460,15 +471,15 @@ def markdown_report(result: dict) -> str:
                       "model from the computed context above. It is not experimental evidence and may be wrong.",
                       ""]
         if ai.get("disclaimer"):
-            lines += [f"> {ai['disclaimer']}", ""]
+            lines += [f"> {_markdown_text(ai['disclaimer'])}", ""]
         for section in structured.get("sections") or []:
-            lines += [f"### {section.get('title')}", "", str(section.get("content", "")), ""]
+            lines += [f"### {_markdown_text(section.get('title'))}", "", _markdown_text(section.get("content", "")), ""]
         for i, claim in enumerate(structured.get("claims") or [], start=1):
-            lines += [f"**Claim {i}** ({_fmt(claim.get('evidence_type'))}): {claim.get('claim')}",
-                      f"- Evidence: {claim.get('evidence')}",
-                      f"- Confidence/uncertainty: {claim.get('confidence_or_uncertainty')}",
-                      f"- Limitation: {claim.get('limitation')}",
-                      f"- Proposed verification: {claim.get('proposed_verification')}"]
+            lines += [f"**Claim {i}** ({_fmt(claim.get('evidence_type'))}): {_markdown_text(claim.get('claim'))}",
+                      f"- Evidence: {_markdown_text(claim.get('evidence'))}",
+                      f"- Confidence/uncertainty: {_markdown_text(claim.get('confidence_or_uncertainty'))}",
+                      f"- Limitation: {_markdown_text(claim.get('limitation'))}",
+                      f"- Proposed verification: {_markdown_text(claim.get('proposed_verification'))}"]
             if claim.get("evidence_ids"):
                 lines.append(f"- Computed result IDs: {', '.join(claim['evidence_ids'])}")
             lines.append("")

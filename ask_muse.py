@@ -565,6 +565,32 @@ def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True):
     raise RuntimeError("Muse Spark request exhausted its bounded retry budget.")
 
 
+def check_provider_connectivity() -> None:
+    """Make one explicitly requested, minimal provider call with no dataset.
+
+    Success means only that a non-empty response was received; it does not
+    validate the structured-report workflow. No retries or raw error text.
+    """
+    api_key = provider_config.get_api_key()
+    if not api_key:
+        raise RuntimeError("BASETEN_API_KEY is not configured; set it locally before checking connectivity.")
+    try:
+        client = OpenAI(api_key=api_key, base_url=BASE_URL, timeout=30.0, max_retries=0)
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "user", "content": "Reply with OK."}],
+            max_completion_tokens=64, stream=False,
+        )
+    except Exception as exc:
+        if _http_status(exc) is not None:
+            raise RuntimeError(describe_provider_error(exc)) from None
+        raise _network_error(exc) from None
+    choices = getattr(response, "choices", None)
+    message = getattr(choices[0], "message", None) if choices else None
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("Connectivity check received no visible response; report generation is not verified.")
+
+
 def provider_status() -> dict:
     """Honest, secret-free configuration status; performs no network call.
 

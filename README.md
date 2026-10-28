@@ -201,6 +201,12 @@ python analyze_dataset.py data/sample_voltage_current.csv \
 Synthetic example datasets are documented in `data/examples/README.md`. They
 are computer-generated, **not** experimental evidence.
 
+## Current readiness
+
+See [docs/HACKATHON_READINESS.md](docs/HACKATHON_READINESS.md) for the latest
+local audit, offline demo checklist and explicit live-provider and security
+limitations. A configured key does not establish a successful live request.
+
 ## Quality gates
 
 ```bash

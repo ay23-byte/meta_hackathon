@@ -111,7 +111,7 @@ Run the opt-in live tests deliberately; they make real, billable calls:
 
 ```bash
 cp .env.example .env          # add your own BASETEN_API_KEY
-python -m pytest -m live -v   # connectivity + structured-report round trip
+python -m pytest --run-live -m live -v   # connectivity + structured-report round trip
 python -m streamlit run app.py
 ```
 
@@ -251,3 +251,16 @@ backward-compatible reuse of provenance-free live wrappers. Seven new regression
 tests in `tests/test_report_provenance.py` cover these paths. Full offline
 suite: **426 passed, 2 skipped**. Live provider reachability is still
 unverified without a real key.
+
+## Audit update (28 Oct 2026)
+
+The general app offers an opt-in, single-request connectivity check in the
+sidebar. It sends only `Reply with OK.`, has a 30-second timeout and no
+retries; a nonempty response does not validate structured report generation.
+It was tested with a fake client only, not a real provider. A separate checkbox
+requests live regeneration for the same analysis; validated UI reports include
+an analysis fingerprint, validation status and UTC validation time. The
+configuration-only sidebar check remains unverified even after another action;
+the report/check output shows its own outcome. Before a live interpretation,
+review filenames, column names, question and computed summaries for sensitive
+information; the context excludes raw rows but is not a privacy guarantee.
