@@ -10,7 +10,7 @@ Only items verified in this environment are checked. See
       server smoke test returning HTTP 200)
 - [x] Sample data loads (bundled `data/sample_voltage_current.csv`, 11 rows)
 - [x] Invalid data is handled transparently (excluded-row counts shown)
-- [x] Scientific calculations are deterministic and tested (419 offline
+- [x] Scientific calculations are deterministic and tested (426 offline
       tests, independent `lstsq` oracle and synthetic known-value datasets)
 - [x] Graphs and metrics match the underlying analysis (CLI artifact test,
       AppTest metric assertions, residual identity)
@@ -85,15 +85,15 @@ Only items verified in this environment are checked. See
 - [x] Generated CLI artifacts are gitignored (`results/README.md`)
 - [x] CSV headers sanitized against spreadsheet formula injection
 
-## Quality gates (measured 27 Oct 2026)
+## Quality gates (measured 28 Oct 2026)
 
-- [x] 419 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
+- [x] 426 passed, 2 skipped offline (skips = live tests); see `docs/IMPLEMENTATION_REPORT.md`
 - [x] 98% statement coverage across the four application modules
 - [x] `ruff check .` clean
 - [x] All Python modules byte-compile
 - [x] Streamlit AppTest covers both UI scripts, upload paths and the mock button
 - [x] `run_agent_demo.py --case all --strict` → 7/7 expected A-E states
-- [x] `pytest -m live -q` → 2 skipped, 419 deselected (no key configured)
+- [x] `pytest -m live -q` → 2 skipped, 426 deselected (no key configured)
 - [x] `pytest -q --cov=ask_muse --cov=result_schema --cov=agent_* --cov=run_agent_demo` → 92% of 1,574 statements
 
 ## Official rules and submission
@@ -173,7 +173,7 @@ Only items verified in this environment are checked. See
 - [x] Live tests require `pytest --run-live -m live -v`; ordinary `pytest -q`
       skips them even when a developer `.env` exists.
 - [x] Six historical failures reproduced with a fake `.env` and fixed; full
-      suite with fake `.env` → **419 passed, 2 skipped**.
+      suite with fake `.env` → **426 passed, 2 skipped**.
 - [x] Mocked tests cover success, missing/blank/placeholder key, 401/403/429,
       timeout, network failure, empty/invalid/unexpected response, AI disabled.
 - [x] Duplicate Streamlit AI calls prevented in both apps; agent consent

@@ -1,7 +1,9 @@
 # LabLens AI — live-demo hardening report
 
-Date: 27 Oct 2026. Branch: `arena/10a318e1-meta-hackathon`.
-Baseline commit: `6169aa8` (merge of PR #4). This report records only commands
+Date: 27 Oct 2026; updated 28 Oct 2026. Branches:
+`arena/10a318e1-meta-hackathon` (hardening) and
+`arena/1c4ab939-meta-hackathon` (provenance-aware report reuse).
+Baseline commit: `6169aa8` (merge of PR #4); provenance fix starts after PR #5. This report records only commands
 actually executed in this workspace. `.env` was absent; a **fake** `.env` was
 created temporarily to reproduce the developer-machine failures and removed
 afterwards. No real credential was read, printed, committed or transmitted.
@@ -66,7 +68,7 @@ After the fix, the same fake `.env` reproduction yields:
 
 ```text
 5 passed, 2 skipped   # targeted six; live tests skip without --run-live
-419 passed, 2 skipped # full offline suite with fake .env present
+426 passed, 2 skipped # full offline suite with fake .env present
 ```
 
 ## 4. Files modified and why
@@ -123,6 +125,7 @@ After the fix, the same fake `.env` reproduction yields:
 | `tests/test_export_safety.py` | 20 | safe archive names, unsafe chart/CLI/ZIP paths, JSON/CSV/Markdown/ZIP consistency, secret-free exports, formula injection, AI vs mock headings |
 | `tests/test_scientific_regressions.py` | 7 | known synthetic line, residuals/JSON finiteness, 1e308 overflow, zero variance, non-finite exclusion, non-positive weights, fixed-seed reproducibility |
 | `tests/test_demo_dataset.py` | 2 | synthetic README wording, known CLI slope/intercept/R² and labelled mock |
+| `tests/test_report_provenance.py` | 7 | provenance helpers, mock→live request, live reuse, live failure, mock isolation, context invalidation |
 | `tests/conftest.py` | n/a | autouse env isolation + `--run-live` collection skip |
 
 ## 6. Exact commands executed and observed results
@@ -139,13 +142,13 @@ pytest -q test_muse.py                                  -> 2 failed (provider un
 
 # After fixes, with the same FAKE .env present
 pytest -q <same 6 historical equivalents>               -> 5 passed, 2 skipped
-.venv/bin/python -m pytest -q                          -> 419 passed, 2 skipped in 84.65 s
+.venv/bin/python -m pytest -q                          -> 426 passed, 2 skipped in 100.78 s
 
 # Final clean-sandbox verification
 .venv/bin/ruff check .                                  -> All checks passed
 .venv/bin/python -m compileall -q -x '\.venv|\.git' .  -> exit 0
-.venv/bin/python -m pytest -q                          -> 419 passed, 2 skipped in 86.06 s
-.venv/bin/python -m pytest -m live -q                  -> 2 skipped, 419 deselected
+.venv/bin/python -m pytest -q                          -> 426 passed, 2 skipped in 103.66 s
+.venv/bin/python -m pytest -m live -q                  -> 2 skipped, 426 deselected
 .venv/bin/python -m pytest --run-live -m live -q       -> 2 skipped (no usable key)
 BASETEN_API_KEY=your_baseten_api_key_here pytest --run-live -m live -q
                                                        -> 2 skipped (placeholder)
@@ -156,7 +159,7 @@ BASETEN_API_KEY=your_baseten_api_key_here pytest --run-live -m live -q
 .venv/bin/python -B analyze_dataset.py data/demo/linear_calibration_demo.csv --x time_s --y signal_mV --model linear --output-dir /tmp/final_cli_demo --ai-mock --report-profile scientific --question "How does signal_mV vary with time_s?"
     -> slope 2.5, intercept 0.1, R² 1.0, 12 observations, 16 files, labelled OFFLINE MOCK
 .venv/bin/python -m pytest -q --cov=provider_config --cov=ask_muse --cov=result_schema --cov=data_io --cov=fitting_core --cov=statistics_core --cov=agent_core --cov=agent_planner --cov=agent_tools --cov=agent_diagnostics --cov=agent_audit --cov=run_agent_demo
-    -> 92% (2,103/2,276 statements), 419 passed, 2 skipped
+    -> 92% (2,130/2,305 statements), 426 passed, 2 skipped
 HTTP smoke on 0.0.0.0:8503: / -> 200, /_stcore/health -> 200,
     preview Origin header -> 200
 ```
@@ -251,3 +254,55 @@ agent audit trail and explicitly labelled OFFLINE MOCK. Live Muse Spark
 end-to-end remains **BLOCKED** until a real key and network access are
 available; the demo must say that honestly rather than presenting a mock as a
 live AI response.
+
+
+---
+
+# Follow-up — provenance-aware report reuse (28 Oct 2026)
+
+A regression was reproduced on branch `arena/1c4ab939-meta-hackathon`: after
+clicking **Preview deterministic OFFLINE MOCK report**, clicking **Generate
+evidence-grounded interpretation** showed "no duplicate provider request" and
+made **zero** provider calls. The live button reused any report for the current
+analysis hash, including a mock.
+
+## Fix
+
+- `ask_muse.py` now defines `LIVE_REPORT_SOURCE`, `MOCK_REPORT_SOURCE`,
+  `report_kind()` and `enforce_report_provenance()`. Every stored report is
+  stamped with `source`, `is_mock` and `provider_status`. A live action refuses
+  a wrapper that declares itself a mock.
+- `general_app.py` stores live and mock reports **separately** in one
+  context-bound session state: `{"hash", "live", "mock", "active"}`.
+  `_current_report(kind)` reuses a report only when both the stored kind and
+  `report_kind(wrapper)` match the requested action.
+- A separate `ai_context_hash` invalidates both reports, stale errors and
+  in-flight flags when the analysis changes, even if a failed live request had
+  cleared the visible report.
+- Live failure calls `_live_request_failed()`: it is redacted and actionable,
+  deactivates the visible report, preserves the stored mock only for a later
+  explicit mock click, and never regenerates or substitutes mock output.
+- Live success stores and displays the validated response with explicit
+  `source="live_provider"`, `is_mock=False` and
+  `provider_status="live_response_validated"`.
+- The offline mock button remains provider-free and reuses only a stored mock.
+- Legacy `app.py` uses the same provenance boundary: `stored_live_report()`
+  ignores a mock wrapper for both duplicate-request suppression and display,
+  while accepting older provenance-free wrappers for backward compatibility.
+
+## Verification
+
+```text
+Reproduction before fix: mock heading=True, provider_calls=0, live heading=False
+Reproduction after fix:  mock heading=True, provider_calls=1, live heading=True
+.venv/bin/ruff check .                    -> All checks passed
+.venv/bin/python -m compileall ...       -> exit 0
+.venv/bin/python -m pytest -q            -> 426 passed, 2 skipped in 103.66 s
+.venv/bin/python -m pytest -m live -q    -> 2 skipped, 426 deselected
+pytest --run-live -m live -q (no key)    -> 2 skipped
+Relevant UI/provider/export tests         -> 145 passed
+New tests/test_report_provenance.py      -> 7 passed
+```
+
+No real API key was configured; live Baseten end-to-end remains BLOCKED. The fix
+is verified with mocked provider functions and Streamlit AppTest only.

@@ -614,6 +614,51 @@ MOCK_DISCLAIMER = (
     "Never present it as live AI."
 )
 
+# Explicit provenance markers. The UI and exports must never infer "live" from
+# the absence of a mock flag; every stored report is stamped by the action that
+# produced it (live provider request vs deterministic offline mock).
+LIVE_REPORT_SOURCE = "live_provider"
+MOCK_REPORT_SOURCE = "offline_mock"
+
+
+def report_kind(wrapper) -> str:
+    """Classify a report wrapper's provenance as live, mock, unknown or none."""
+    if not isinstance(wrapper, dict):
+        return "none"
+    if wrapper.get("is_mock") is True or wrapper.get("source") == MOCK_REPORT_SOURCE:
+        return "mock"
+    if wrapper.get("source") == LIVE_REPORT_SOURCE or wrapper.get("is_mock") is False:
+        return "live"
+    return "unknown"
+
+
+def enforce_report_provenance(wrapper, kind: str) -> dict:
+    """Return a copy with provenance appropriate for the requested action.
+
+    A live action refuses a wrapper that declares itself a mock. A mock action
+    always stamps ``source="offline_mock"`` and ``is_mock=True``. This is the
+    single place where explicit live/mock provenance is written.
+    """
+    if kind not in ("live", "mock"):
+        raise ValueError("Report kind must be 'live' or 'mock'.")
+    if not isinstance(wrapper, dict):
+        raise RuntimeError("Report wrapper must be a dictionary.")
+    declared = report_kind(wrapper)
+    if kind == "live" and declared == "mock":
+        raise RuntimeError("An offline MOCK cannot be presented as a live provider response.")
+    clean = dict(wrapper)
+    if kind == "live":
+        clean["source"] = LIVE_REPORT_SOURCE
+        clean["is_mock"] = False
+        clean["provider_status"] = "live_response_validated"
+        clean.pop("disclaimer", None)
+    else:
+        clean["source"] = MOCK_REPORT_SOURCE
+        clean["is_mock"] = True
+        clean["provider_status"] = "not_called"
+        clean.setdefault("disclaimer", MOCK_DISCLAIMER)
+    return clean
+
 
 def _bounded_text(text: str, *, words: int = MAX_SECTION_WORDS,
                   chars: int = MAX_CONTENT_CHARS) -> str:
@@ -714,7 +759,7 @@ def generate_mock_report(analysis_context, section_titles=None, *,
         raise RuntimeError("The offline mock report failed local strict schema validation.")
     return {
         "model": MOCK_MODEL_ID,
-        "source": "offline_mock",
+        "source": MOCK_REPORT_SOURCE,
         "is_mock": True,
         "provider_status": "not_called",
         "disclaimer": MOCK_DISCLAIMER,
@@ -807,8 +852,9 @@ def generate_interpretation(analysis_context, section_titles=None, *,
 
     return {
         "model": getattr(response, "model", None) or MODEL,
-        "source": "live_provider",
+        "source": LIVE_REPORT_SOURCE,
         "is_mock": False,
+        "provider_status": "live_response_validated",
         "profile": profile,
         "structured": structured,
     }

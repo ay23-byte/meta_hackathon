@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+import ask_muse
 import provider_config
 from analysis_core import (
     analyze_linear,
@@ -679,11 +680,27 @@ st.caption(
 )
 
 current_hash = make_context_hash(record, explorer_records)
-existing_report = (
-    st.session_state.get("lablens_ai_report")
-    if st.session_state.get("lablens_ai_context_hash") == current_hash
-    else None
-)
+
+
+def stored_live_report():
+    """Return a context-matching live report, never an offline mock.
+
+    Legacy wrappers without provenance are treated as live for backward
+    compatibility; an explicitly labelled mock is not reused by the live
+    action and is not displayed as a Muse Spark report.
+    """
+    report = st.session_state.get("lablens_ai_report")
+    if st.session_state.get("lablens_ai_context_hash") != current_hash:
+        return None
+    if not isinstance(report, dict) or report.get("is_mock"):
+        return None
+    source = report.get("source")
+    if source not in (None, ask_muse.LIVE_REPORT_SOURCE):
+        return None
+    return report
+
+
+existing_report = stored_live_report()
 
 if st.button("Generate evidence-grounded interpretation", type="primary"):
     # A rerun alone never calls the provider. The in-flight flag and the
@@ -747,11 +764,7 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         finally:
             st.session_state.pop("lablens_ai_request_in_flight", None)
 
-ai_report = (
-    st.session_state.get("lablens_ai_report")
-    if st.session_state.get("lablens_ai_context_hash") == current_hash
-    else None
-)
+ai_report = stored_live_report()
 if ai_report:
     ai_status = "succeeded (unverified AI hypotheses)"
 elif st.session_state.get("lablens_ai_request_in_flight"):

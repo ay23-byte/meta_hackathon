@@ -216,14 +216,14 @@ python -m compileall -q *.py
 `pytest` run contact Baseten. Obvious placeholder keys are treated as not
 configured. Live tests require both `--run-live` and a usable key.
 
-Measured in this repository on 27 Oct 2026 (Linux, CPython 3.11,
+Measured in this repository on 28 Oct 2026 (Linux, CPython 3.11,
 pandas 3.1.0, numpy 2.4.6, SciPy 1.17.1, Altair 6.3.0, Streamlit 1.66.1):
 
-- **419 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
-  the hardening phase added 71 regression tests on top of the 348-test
-  master-prompt baseline.
+- **426 passed, 2 skipped** (the skips are the opt-in live Muse Spark tests);
+  the hardening and provenance phases added 78 regression tests on top of the
+  348-test master-prompt baseline.
 - `ruff check .` clean; `python -m compileall -q *.py` exits 0.
-- Final coverage run: **92% (2,103/2,276 statements)** across
+- Final coverage run: **92% (2,130/2,305 statements)** across
   `provider_config`, `ask_muse`, `result_schema`, `data_io`, fitting/statistics
   core and the agent modules. Earlier phases measured 91% / 90% on smaller
   module sets; those are historical, not the final number.
