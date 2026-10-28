@@ -51,6 +51,16 @@ def test_result_is_strict_json_serializable(result):
     assert b"NaN" not in payload and b"Infinity" not in payload
 
 
+def test_json_export_round_trips_unicode_with_windows_legacy_encoding(result):
+    # A Windows caller may use Path.read_text() with CP1252 instead of UTF-8.
+    # Non-ASCII must round-trip without corrupting the insight text or metadata.
+    result["source"]["name"] = "mesure_µΩ_🔬.csv"
+    payload = export_bundle(result)["results.json"]
+    assert b"\\u00b2" in payload  # R² in the fit-diagnostics insight
+    assert json.loads(payload.decode("cp1252")) == result
+    assert json.loads(payload.decode("utf-8")) == result
+
+
 def test_markdown_report_contains_all_deterministic_sections(result):
     report = markdown_report(result)
     for heading in ("Configuration", "Cleaning decisions", "Descriptive statistics",
