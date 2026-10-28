@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+from insight_engine import discover_insights
+
 SCHEMA_VERSION = "2.0"
 
 
@@ -124,6 +126,7 @@ def build_result(
     if isinstance(result["fit"], dict):
         warnings.extend(result["fit"].get("warnings", []))
     result["warnings"] = json_safe([item for item in dict.fromkeys(warnings) if item])
+    result["insights"] = discover_insights(result)
     return result
 
 
@@ -338,6 +341,8 @@ def markdown_report(result: dict) -> str:
         "## 1. Configuration",
         "",
         f"- X: {_fmt(roles.get('x'))}; Y: {_fmt(roles.get('y'))}",
+        f"- X unit: {_fmt(roles.get('unit_x'))} (origin: {_fmt(roles.get('unit_x_origin'))}); "
+        f"Y unit: {_fmt(roles.get('unit_y'))} (origin: {_fmt(roles.get('unit_y_origin'))})",
         f"- Group: {_fmt(roles.get('group'))}; Time: {_fmt(roles.get('time'))}",
         f"- Uncertainty: {_fmt(roles.get('uncertainty'))}; "
         f"Secondary Y: {_fmt(roles.get('secondary_y'))}",
@@ -359,6 +364,20 @@ def markdown_report(result: dict) -> str:
             f"invalid={_fmt(column.get('invalid'))}, nonfinite={_fmt(column.get('nonfinite'))}, "
             f"coerced={_fmt(column.get('coerced'))}, valid={_fmt(column.get('valid'))}"
         )
+    insights = result.get("insights") or {}
+    if insights:
+        lines += ["", "## Key insights (deterministic)", "", _markdown_text(insights.get("ranking")), ""]
+        for card in insights.get("items") or []:
+            lines += [f"### {_markdown_text(card.get('title'))}", "",
+                      f"- {_markdown_text(card.get('label'))}: {_markdown_text(card.get('observation'))}",
+                      f"- Interpretation: {_markdown_text(card.get('interpretation'))}",
+                      f"- Evidence paths: {_fmt(card.get('evidence_paths'))}",
+                      f"- Limitations: {_markdown_text(card.get('limitations'))}",
+                      f"- Next step: {_markdown_text(card.get('next_step'))}",
+                      f"- Why highlighted: {_markdown_text(card.get('rank_reason'))}", ""]
+        if not insights.get("items"):
+            lines += ["Insufficient information for supported insight cards.", ""]
+        lines += [_markdown_text(insights.get("limitations")), ""]
     lines += ["", "## 3. Descriptive statistics", ""]
     for column, summary in stats.items():
         if not isinstance(summary, dict):

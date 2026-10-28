@@ -195,6 +195,8 @@ def analyze_csv(
         "x": x_col, "y": y_col, "group": group, "time": time,
         "uncertainty": uncertainty, "secondary_y": [],
         "unit_x": unit_x, "unit_y": unit_y, "unit_time": "",
+        "unit_x_origin": "user_entered" if unit_x else "unspecified",
+        "unit_y_origin": "user_entered" if unit_y else "unspecified",
         "question": research_question or "Command-line analysis",
         "model": model, "degree": degree,
         "domain": domain, "correlation_method": correlation_method,
