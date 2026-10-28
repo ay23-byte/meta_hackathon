@@ -12,8 +12,10 @@ import html
 import io
 import json
 import math
+import platform
 import re
 from datetime import datetime, timezone
+from importlib import metadata
 
 import numpy as np
 import pandas as pd
@@ -86,6 +88,17 @@ def _csv_bytes(frame: pd.DataFrame) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
+def software_versions() -> dict:
+    """Record a small allowlist of runtime versions, never environment values or paths."""
+    packages = {}
+    for name in ("numpy", "pandas", "scipy", "streamlit", "altair", "matplotlib", "openai"):
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            packages[name] = None
+    return {"python": platform.python_version(), "packages": packages}
+
+
 def build_result(
     *,
     source: dict,
@@ -105,6 +118,7 @@ def build_result(
     """Assemble the single result object consumed by all exporters."""
     result = {
         "schema_version": SCHEMA_VERSION,
+        "software": software_versions(),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": json_safe(source),
         "roles": json_safe(roles),
@@ -337,6 +351,11 @@ def markdown_report(result: dict) -> str:
         "",
         f"- Generated (UTC): {result.get('generated_at_utc', 'unknown')}",
         f"- Schema version: {result.get('schema_version', 'unknown')}",
+        f"- Python version: {_fmt((result.get('software') or {}).get('python'))}",
+        "- Package versions: " + ", ".join(
+            f"{_fmt(name)} {_fmt(version)}" for name, version in
+            ((result.get("software") or {}).get("packages") or {}).items()
+        ) if (result.get("software") or {}).get("packages") else "- Package versions: not recorded",
         f"- Source: {_fmt(source.get('name'))} ({_fmt(source.get('rows'))} rows, "
         f"{_fmt(len(source.get('columns') or []))} columns)",
         f"- Encoding / delimiter: {_fmt(source.get('encoding'))} / {_fmt(source.get('delimiter'))!r}",
@@ -583,6 +602,26 @@ def markdown_report(result: dict) -> str:
                   f"{_fmt(comparison.get('mean_y_difference_second_minus_first'))} "
                   f"{_fmt((comparison.get('datasets') or [{}])[0].get('unit_y'))}.",
                   "", _markdown_text(comparison.get("limitations")), "", _markdown_text(comparison.get("plot_note"))]
+    predictions = result.get("predictions") or {}
+    if predictions:
+        lines += ["", "## Follow-up predictions (model-based, not observations)", "",
+                  _markdown_text(predictions.get("caveat")), "",
+                  "| Candidate X | Predicted Y | Range |", "| --- | --- | --- |"]
+        for row in predictions.get("rows") or []:
+            lines.append(f"| {_fmt(row.get('candidate_x'))} | {_fmt(row.get('predicted_y'))} | "
+                         f"{_fmt(row.get('range_flag'))} |")
+        intervals = predictions.get("intervals") or {}
+        if intervals.get("status") == "conditional":
+            lines += ["", "### Conditional 95% intervals", "", _markdown_text(intervals.get("assumptions")),
+                      "", _markdown_text(intervals.get("limitations")), "",
+                      "| X | Mean lower | Mean upper | Prediction lower | Prediction upper | Range |",
+                      "| --- | --- | --- | --- | --- | --- |"]
+            for row in intervals.get("rows") or []:
+                lines.append(f"| {_fmt(row.get('candidate_x'))} | {_fmt(row.get('mean_lower'))} | "
+                             f"{_fmt(row.get('mean_upper'))} | {_fmt(row.get('prediction_lower'))} | "
+                             f"{_fmt(row.get('prediction_upper'))} | {_fmt(row.get('range_flag'))} |")
+        elif intervals:
+            lines += ["", f"Prediction intervals unavailable: {_fmt(intervals.get('reason'))}."]
     research = result.get("research") or {}
     if research:
         context = research.get("context") or {}

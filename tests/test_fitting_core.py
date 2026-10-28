@@ -116,3 +116,66 @@ def test_model_comparison_orders_by_aic_and_reports_failures():
     assert rows[0]["model"] == "linear" or rows[0]["aic"] is not None
     assert any(row["model"] == "power" for row in rows)
     assert all(math.isfinite(row["r2"]) for row in rows if row["success"] and row["r2"] is not None)
+
+
+def test_weighted_linear_parameter_errors_use_absolute_input_uncertainties():
+    # An exact line must not erase the supplied measurement uncertainty.
+    x = np.array([0., 1., 2., 3.])
+    sigma = np.array([0.2, 0.4, 0.3, 0.5])
+    design = np.column_stack((np.ones_like(x), x))
+    covariance = np.linalg.inv(design.T @ np.diag(1 / sigma**2) @ design)
+    fit = fit_linear(x, 1 + 2 * x, weights=1 / sigma**2)
+    assert fit.success
+    assert fit.parameter_errors["intercept"] == pytest.approx(np.sqrt(covariance[0, 0]))
+    assert fit.parameter_errors["slope"] == pytest.approx(np.sqrt(covariance[1, 1]))
+    assert "absolute inverse variances" in " ".join(fit.warnings)
+
+
+def test_two_point_linear_fit_does_not_invent_residual_based_errors():
+    fit = fit_linear([0, 1], [1, 3])
+    assert fit.success
+    assert fit.parameter_errors == {}
+    assert "unavailable" in " ".join(fit.warnings)
+    # With known, supplied measurement variances, covariance is still defined,
+    # but the two-point data cannot assess residual scatter or goodness of fit.
+    weighted = fit_linear([0, 1], [1, 3], weights=[100, 100])
+    assert weighted.parameter_errors["slope"] == pytest.approx(np.sqrt(0.02))
+    assert weighted.parameter_errors["intercept"] == pytest.approx(0.1)
+    assert weighted.metrics["degrees_of_freedom"] == 0
+
+
+def test_exponential_overflow_is_undefined_not_silently_clipped():
+    x = np.linspace(1, 6, 25)
+    fit = fit_model("exponential", x, 2 * np.exp(.4 * x) + 3)
+    assert fit.success
+    result = predict_with_flags(fit, [2000.0])
+    assert result["range_flags"] == ["undefined"]
+    assert math.isnan(result["predicted"][0])
+
+
+def test_tiny_imperfect_fit_refuses_underflowed_diagnostics():
+    fit = fit_linear([0, 1, 2, 3], [1e-200, 2e-200, 3e-200, 5e-200])
+    assert not fit.success
+    assert "underflow" in fit.reason
+    assert fit.parameter_errors == {}
+
+
+def test_large_x_offset_does_not_overflow_intercept_error_calculation():
+    x = np.array([1e155, 1.00001e155, 1.00002e155])
+    fit = fit_linear(x, [1, 2, 3])
+    assert fit.success, fit.reason
+    assert math.isfinite(fit.parameter_errors["intercept"])
+
+
+@pytest.mark.parametrize("sigma", [[1e-200], [1e200], [0], [float("inf")]])
+def test_inverse_variance_weights_reject_unrepresentable_inputs(sigma):
+    from fitting_core import inverse_variance_weights
+
+    with pytest.raises(ValueError):
+        inverse_variance_weights(sigma)
+
+
+def test_inverse_variance_weights_preserve_known_values():
+    from fitting_core import inverse_variance_weights
+
+    assert inverse_variance_weights([0.5, 2.0]) == pytest.approx([4.0, 0.25])

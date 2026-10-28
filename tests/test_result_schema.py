@@ -138,3 +138,18 @@ def test_full_bundle_is_a_valid_zip(result):
             archive.writestr(name, payload)
     with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as archive:
         assert "results.json" in archive.namelist()
+
+
+def test_runtime_versions_are_in_json_and_report_but_not_ai_context(result):
+    import platform
+    from importlib import metadata
+
+    exported = json.loads(results_json(result))
+    assert exported["software"]["python"] == platform.python_version()
+    assert exported["software"]["packages"]["numpy"] == metadata.version("numpy")
+    report = markdown_report(result)
+    assert "Python version:" in report and "numpy " + metadata.version("numpy") in report
+    assert "software" not in ai_context(result)
+    # Older result records remain renderable.
+    del result["software"]
+    assert "Package versions: not recorded" in markdown_report(result)

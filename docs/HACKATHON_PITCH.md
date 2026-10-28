@@ -24,8 +24,7 @@ LabLens connects data inspection, confirmed variable selection,
 deterministic fitting, residual diagnostics, a hypothetical follow-up
 explorer, and a portable record in one short flow. Cleaning is explicit:
 excluded pairs are counted, source row numbers are retained, and no
-outliers are removed automatically. Every download carries the input
-SHA-256, cleaning policy, warnings, and software versions.
+outliers are removed automatically. The JSON and Markdown records carry the input SHA-256, cleaning policy, warnings, and selected runtime software versions; the ZIP includes both records. The standalone cleaned CSV does not contain this provenance.
 
 ## Meta AI tooling (Use of Meta AI Tooling, 25%)
 

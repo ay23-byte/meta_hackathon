@@ -103,3 +103,13 @@ def test_descriptive_table_has_one_row_per_statistic():
     assert "ci95_high" in table["statistic"].tolist()
     assert list(table.columns) == ["statistic", "a", "b"]
     assert table.loc[table["statistic"] == "mean", "a"].iloc[0] == pytest.approx(2.0)
+
+
+def test_mean_interval_does_not_treat_underflow_as_identical_data():
+    from statistics_core import confidence_interval_mean
+
+    result = confidence_interval_mean([1e-200, 2e-200, 3e-200])
+    assert result["interval"] is None
+    assert "underflow" in result["method"]
+    identical = confidence_interval_mean([1e-200, 1e-200, 1e-200])
+    assert identical["interval"] == [1e-200, 1e-200]

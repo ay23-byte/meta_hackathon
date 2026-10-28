@@ -34,6 +34,7 @@ from fitting_core import (
     MODEL_SPECS,
     compare_models,
     fit_model,
+    inverse_variance_weights,
     predict_with_flags,
     suggest_models,
 )
@@ -53,12 +54,15 @@ from statistics_core import (
     outlier_diagnostics,
 )
 from theory_engine import ohmic_chapter
-from uncertainty_engine import propagate_independent
+from uncertainty_engine import linear_prediction_intervals, propagate_independent
 from visualization_core import PLOT_TYPES, build_chart, render_png
 
 ROOT = Path(__file__).resolve().parent
 SAMPLE = ROOT / "data" / "sample_voltage_current.csv"
 EXAMPLES = sorted((ROOT / "data" / "examples").glob("*.csv")) if (ROOT / "data" / "examples").exists() else []
+DEMO = ROOT / "data" / "demo" / "linear_calibration_demo.csv"
+if DEMO.is_file():
+    EXAMPLES.append(DEMO)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_ROWS = 200_000
@@ -221,6 +225,9 @@ else:
     )
     raw = chosen.read_bytes()
     source_name = chosen.name
+    if chosen == DEMO:
+        st.info("Synthetic demonstration data: computer-generated, not experimental measurements. "
+                "Three intentionally invalid rows illustrate the cleaning workflow.")
 
 if not raw:
     st.error("The selected file is empty.")
@@ -341,7 +348,9 @@ with role_col:
     y_col = choose("Y column (dependent)", y_options, suggestion.y, allow_none=False)
     group_col = choose("Group / category column", all_columns, suggestion.group)
     time_col = choose("Time column", all_columns, suggestion.time)
-    uncertainty_col = choose("Uncertainty column (1 sigma)", all_columns, suggestion.uncertainty)
+    # A name-based hint is not evidence that a column contains calibrated,
+    # independent 1-sigma uncertainties. Weighting must be a user choice.
+    uncertainty_col = choose("Uncertainty column (1 sigma)", all_columns, None)
     secondary_y = st.multiselect(
         "Secondary Y columns (plotted separately)",
         [column for column in numeric_override if column not in (x_col, y_col)],
@@ -475,6 +484,7 @@ if len(x_values) < 2:
 
 # Weighting: only when a user-selected uncertainty column exists.
 uncertainty_values = None
+weights = None
 if uncertainty_col and uncertainty_col in working.columns:
     candidate_unc = np.asarray(
         pd.to_numeric(working[uncertainty_col], errors="coerce"), dtype=float
@@ -483,7 +493,12 @@ if uncertainty_col and uncertainty_col in working.columns:
     if len(candidate_unc) == len(usable):
         aligned = candidate_unc[usable]
         if np.all(np.isfinite(aligned)) and np.all(aligned > 0) and len(aligned) == len(x_values):
-            uncertainty_values = aligned
+            try:
+                weights = inverse_variance_weights(aligned)
+                uncertainty_values = aligned
+            except ValueError:
+                st.warning("The selected uncertainties produce weights outside the numerical range, "
+                           "so they are NOT used. Rescale the data and uncertainty units.")
         else:
             st.warning(
                 "The selected uncertainty column contains non-positive or non-finite values "
@@ -498,8 +513,7 @@ try:
     y_bytes = np.ascontiguousarray(y_values, dtype=float).tobytes()
     # The selected column is a 1-sigma uncertainty; fitting_core expects
     # inverse-variance weights w = 1/sigma**2.
-    w_bytes = (np.ascontiguousarray(1.0 / uncertainty_values**2, dtype=float).tobytes()
-               if uncertainty_values is not None else None)
+    w_bytes = np.ascontiguousarray(weights, dtype=float).tobytes() if weights is not None else None
     fit = fit_cached(model_name, x_bytes, y_bytes, w_bytes, degree, x_label, y_label)
 except Exception as exc:
     st.error(f"The fit could not be computed: {_safe_error(exc)}")
@@ -895,11 +909,23 @@ if values:
                 for x, y, flag in zip(prediction["x"], prediction["predicted"],
                                       prediction["range_flags"], strict=True)
             ]
+            intervals = linear_prediction_intervals(fit, parsed)
+            result["predictions"] = {"rows": rows, "intervals": intervals, "caveat": prediction["caveat"]}
             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            if all(flag == "in_range" for flag in prediction["range_flags"]):
-                st.info("All proposed points are within the measured range; no extrapolation was used.")
+            if intervals["status"] == "conditional":
+                with st.expander("Conditional 95% mean-response and individual prediction intervals"):
+                    st.dataframe(pd.DataFrame(intervals["rows"]), width="stretch", hide_index=True)
+                    st.caption(intervals["assumptions"])
+                    st.caption(intervals["limitations"])
             else:
+                st.caption(f"Prediction intervals unavailable: {intervals['reason']}")
+            flags = prediction["range_flags"]
+            if "undefined" in flags:
+                st.warning("Some predictions are undefined, for example because the model domain or numerical range was exceeded.")
+            if "extrapolated" in flags:
                 st.warning("Some proposed points are extrapolated beyond the fitted X range.")
+            if all(flag == "in_range" for flag in flags):
+                st.info("All proposed points are within the measured range; no extrapolation was used.")
             st.caption(prediction["caveat"])
         else:
             st.info(prediction.get("reason", "Prediction unavailable."))

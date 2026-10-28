@@ -11,6 +11,19 @@ the separate "Preview deterministic OFFLINE MOCK report (no API key, NOT AI)"
 button or `--ai-mock`, while saying clearly that it is a local template and
 NOT Muse Spark output. The primary app for the recording is `general_app.py`.
 
+## No-upload synthetic demo path
+
+In step A choose `linear_calibration_demo.csv` from the bundled synthetic
+examples. This is computer-generated, not experimental evidence. In step C,
+select `time_s` as X, `signal_mV` as Y and linear model; leave the uncertainty
+column at `(none)` for the unweighted baseline. The 15 source rows include three deliberately
+invalid responses: they remain in the cleaned CSV but are excluded from the
+12 paired fit observations. The expected slope is 2.5 and intercept 0.1
+(up to floating-point error). Set units to `s` and `mV` if desired; these are
+user-supplied labels. A perfect synthetic fit is a functional demonstration,
+not evidence of real-world accuracy. Use the separately labelled OFFLINE MOCK
+if live Muse Spark is not available; never represent it as a live call.
+
 ## Pre-recording checklist
 
 - [ ] `python -m pytest -m "not live" -q` passes; `ruff check .` passes.
@@ -56,7 +69,7 @@ Show the fit plot and residual plot. Emphasize:
 - R² does not prove the physical model;
 - invalid paired rows are counted and excluded, never silently dropped;
 - no outliers are removed automatically;
-- no instrument uncertainty or confidence intervals are claimed.
+- no instrument uncertainty is inferred; any displayed confidence interval is conditional on its stated model assumptions.
 
 Optional credibility beat (5 s): mention the regression test that catches
 large-offset numerical instability — evidence of engineering depth.
@@ -96,10 +109,8 @@ Never present the mock as live AI. In the export, point to the distinct
 
 ### 2:10–2:30 — Export reproducibility
 
-Download all three files. Open the Markdown report and JSON record on
-screen. Point to: source filename, input SHA-256, original/retained row
-counts, cleaning policy, model and method, metrics, warnings, software
-versions, and the AI-used flag.
+Download the full ZIP and the JSON record. Open the Markdown report inside the ZIP and the JSON record on screen. Point to: source filename, input SHA-256, original/retained row
+counts, cleaning policy, model and method, metrics, warnings, selected runtime software versions, and the AI-used flag. The standalone cleaned CSV does not contain this provenance.
 
 ### 2:30–2:45 — Close
 

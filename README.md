@@ -42,6 +42,18 @@ Both Streamlit scripts are independent, runnable apps. `general_app.py` offers
 the bundled voltage-current sample as one of several example datasets; it does
 not hardcode those column names or units.
 
+### Quick synthetic demo (no API key or upload)
+
+Run `python -m streamlit run general_app.py`, then choose
+`linear_calibration_demo.csv` in the bundled examples. Select `time_s` and
+`signal_mV` as X and Y and a linear model. The deliberately messy synthetic
+file has 15 rows, including three invalid responses; the 12 valid pairs fit
+slope 2.5 and intercept 0.1. This is a software demonstration, not experimental
+evidence. See [the demo script](docs/DEMO_SCRIPT.md) for a judge-facing
+walkthrough and the honest offline AI fallback. JSON and Markdown reports
+record a small allowlist of runtime versions; this is useful provenance, not a
+complete environment lock or a guarantee of reproducibility.
+
 ## General platform features (steps A-G)
 
 - **A - Upload.** Bytes/path/file-like inputs; BOM, UTF-8 and cp1252/latin-1
@@ -72,7 +84,10 @@ not hardcode those column names or units.
   uncertainty column is finite and positive. Convergence failures, domain
   violations and underdetermined fits are returned as explicit reasons, not
   tracebacks. Model suggestions are labelled shape heuristics; AIC /
-  adjusted-R² comparison is shown. Predictions flag extrapolation.
+  adjusted-R² comparison is shown. Predictions flag extrapolation; conditional
+  95% mean-response and individual prediction intervals are available for
+  unweighted linear fits with sufficient data. Weighting requires an explicit
+  uncertainty-column selection.
 - **F - Interpret.** Optional Muse Spark report generated only from a compact,
   deterministic-only context (no raw rows, no prior AI text). The `legacy`
   eight-section profile remains the default; a `scientific` profile adds
