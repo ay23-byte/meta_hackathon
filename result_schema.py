@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from insight_engine import discover_insights
+from uncertainty_engine import linear_parameter_intervals
 
 SCHEMA_VERSION = "2.0"
 
@@ -127,6 +128,7 @@ def build_result(
         warnings.extend(result["fit"].get("warnings", []))
     result["warnings"] = json_safe([item for item in dict.fromkeys(warnings) if item])
     result["insights"] = discover_insights(result)
+    result["uncertainty"] = linear_parameter_intervals(result["fit"], result["roles"])
     return result
 
 
@@ -434,6 +436,23 @@ def markdown_report(result: dict) -> str:
             lines.append(f"| {name} | {_fmt(metrics.get(name))} |")
         if fit.get("x_range"):
             lines.append(f"\nFitted X range: {_fmt(fit['x_range'])}. Predictions outside it are extrapolations.")
+    uncertainty = result.get("uncertainty") or {}
+    if uncertainty:
+        lines += ["", "### Conditional linear parameter confidence intervals", ""]
+        if uncertainty.get("status") == "conditional":
+            lines += [f"- Method: {_fmt(uncertainty.get('method'))}; confidence level: "
+                      f"{_fmt(uncertainty.get('confidence_level'))}; residual df: "
+                      f"{_fmt(uncertainty.get('degrees_of_freedom'))}", "",
+                      "| Parameter | Estimate | Standard error | Lower | Upper | Unit |",
+                      "| --- | ---: | ---: | ---: | ---: | --- |"]
+            for item in uncertainty.get("parameters") or []:
+                lines.append(f"| {_fmt(item.get('parameter'))} | {_fmt(item.get('estimate'))} | "
+                             f"{_fmt(item.get('standard_error'))} | {_fmt(item.get('lower'))} | "
+                             f"{_fmt(item.get('upper'))} | {_fmt(item.get('unit'))} |")
+        else:
+            lines.append(f"Unavailable: {_fmt(uncertainty.get('reason'))}")
+        lines += ["", _markdown_text(uncertainty.get("assumptions")), "",
+                  _markdown_text(uncertainty.get("limitations"))]
     lines += ["", "## 6. Model comparison", "", "| Model | OK | n | Params | R² | Adj. R² | AIC | RMSE |",
               "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in result.get("model_comparison") or []:
@@ -534,6 +553,36 @@ def markdown_report(result: dict) -> str:
         lines += ["", "## 10. AI-generated interpretation", "",
                   "Not requested, or the provider was unavailable. All deterministic results above "
                   "are complete without AI."]
+    propagation = result.get("propagation") or {}
+    if propagation:
+        supplied = propagation.get("inputs") or {}
+        lines += ["", "## User-supplied uncertainty propagation (conditional)", "",
+                  "Values and uncertainties below are user supplied, not measured or inferred by LabLens.",
+                  f"- Equation: {_fmt(propagation.get('equation'))}",
+                  f"- a: {_fmt(supplied.get('a'))}; standard uncertainty: {_fmt(supplied.get('u_a'))} "
+                  f"{_fmt(supplied.get('unit_a'))}",
+                  f"- b: {_fmt(supplied.get('b'))}; standard uncertainty: {_fmt(supplied.get('u_b'))} "
+                  f"{_fmt(supplied.get('unit_b'))}",
+                  f"- Computed value: {_fmt(propagation.get('value'))}; standard uncertainty: "
+                  f"{_fmt(propagation.get('standard_uncertainty'))} {_fmt(propagation.get('unit'))}",
+                  "", _markdown_text(propagation.get("method")), "", _markdown_text(propagation.get("assumptions")),
+                  "", _markdown_text(propagation.get("limitations"))]
+        if propagation.get("warning"):
+            lines += ["", f"Warning: {_markdown_text(propagation['warning'])}"]
+    comparison = result.get("comparison") or {}
+    if comparison:
+        lines += ["", "## Experiment comparison (user-confirmed, not independently verified)", "",
+                  _markdown_text(comparison.get("method")), ""]
+        for item in comparison.get("datasets") or []:
+            lines.append(f"- {_fmt(item.get('dataset'))}: source {_fmt(item.get('source_name'))}; "
+                         f"SHA-256 {_fmt(item.get('source_sha256'))}; X {_fmt(item.get('x_column'))} "
+                         f"({_fmt(item.get('unit_x'))}); Y {_fmt(item.get('y_column'))} ({_fmt(item.get('unit_y'))}); "
+                         f"paired n={_fmt(item.get('valid_pairs'))}; excluded={_fmt(item.get('excluded_pairs'))}; "
+                         f"mean X={_fmt(item.get('mean_x'))}; mean Y={_fmt(item.get('mean_y'))}.")
+        lines += ["", f"Difference in paired Y means, second minus first: "
+                  f"{_fmt(comparison.get('mean_y_difference_second_minus_first'))} "
+                  f"{_fmt((comparison.get('datasets') or [{}])[0].get('unit_y'))}.",
+                  "", _markdown_text(comparison.get("limitations")), "", _markdown_text(comparison.get("plot_note"))]
     research = result.get("research") or {}
     if research:
         context = research.get("context") or {}

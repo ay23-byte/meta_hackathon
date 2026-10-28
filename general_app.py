@@ -29,6 +29,7 @@ from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
 from domain_modules import apply_domain, list_domain_modules
+from experiment_comparison import compare_experiments
 from fitting_core import (
     MODEL_SPECS,
     compare_models,
@@ -52,6 +53,7 @@ from statistics_core import (
     outlier_diagnostics,
 )
 from theory_engine import ohmic_chapter
+from uncertainty_engine import propagate_independent
 from visualization_core import PLOT_TYPES, build_chart, render_png
 
 ROOT = Path(__file__).resolve().parent
@@ -775,6 +777,52 @@ else:
         st.caption("Unweighted fit (ordinary least squares). No uncertainty column was applied, "
                    "so parameter errors come from residual scatter and are not calibrated.")
 
+with st.expander("Parameter confidence intervals (conditional)"):
+    uncertainty = result["uncertainty"]
+    if uncertainty["status"] == "conditional":
+        st.dataframe(pd.DataFrame(uncertainty["parameters"]), width="stretch", hide_index=True)
+        st.caption(f"95% Student-t intervals; residual degrees of freedom: {uncertainty['degrees_of_freedom']}.")
+    else:
+        st.info(uncertainty["reason"])
+    st.caption(uncertainty["assumptions"])
+    st.caption(uncertainty["limitations"])
+
+with st.expander("Propagate user-supplied standard uncertainties"):
+    st.caption("Optional calculator: enter measured or illustrative values yourself. "
+               "Inputs are not inferred from the dataset; results are conditional, not experimental evidence.")
+    propagation_enabled = st.checkbox("Enable independent-input propagation", value=False)
+    if propagation_enabled:
+        op = st.selectbox("Propagation operation", ["sum", "difference", "product", "ratio"])
+        pa1, pa2 = st.columns(2)
+        with pa1:
+            va = st.number_input("Value a", value=0.0, format="%.8g")
+            ua = st.number_input("Standard uncertainty of a", value=0.0, min_value=0.0, format="%.8g")
+            unita = st.text_input("Unit of a (use 1 if dimensionless)", max_chars=24)
+        with pa2:
+            vb = st.number_input("Value b", value=0.0, format="%.8g")
+            ub = st.number_input("Standard uncertainty of b", value=0.0, min_value=0.0, format="%.8g")
+            unitb = st.text_input("Unit of b (use 1 if dimensionless)", max_chars=24)
+        propagation_hash = _hash({"operation": op, "a": va, "u_a": ua, "unit_a": unita,
+                                  "b": vb, "u_b": ub, "unit_b": unitb})
+        propagation_confirmed = st.checkbox(
+            "I supplied these values and standard uncertainties and assume zero covariance",
+            value=False, key=f"propagation_confirm_{propagation_hash}")
+        if propagation_confirmed:
+            try:
+                calculation = propagate_independent(op, va, ua, unita, vb, ub, unitb, confirmed=True)
+            except ValueError as exc:
+                st.warning(f"Propagation unavailable: {_safe_error(exc)}")
+            else:
+                result["propagation"] = calculation
+                st.text(f"Conditional result: {calculation['value']:.6g} ± "
+                        f"{calculation['standard_uncertainty']:.6g} {calculation['unit']} "
+                        "(standard uncertainty)")
+                st.caption(calculation["method"])
+                st.caption(calculation["assumptions"])
+                st.caption(calculation["limitations"])
+                if calculation["warning"]:
+                    st.warning(calculation["warning"])
+
 with st.expander("Compare candidate models"):
     choices = [item.model for item in comparison_results if item.success]
     selected_models = st.multiselect("Candidate models to compare", choices, default=choices[:2],
@@ -1134,6 +1182,59 @@ if current_report:
 else:
     st.caption("No report has been generated. The app works fully without an API key; "
                "the offline MOCK is always labelled as a mock.")
+
+
+# Optional second dataset remains local and is not included in AI context.
+with st.expander("Compare a second experiment (offline)"):
+    st.caption("Confirm that the variables, units, methods and conditions are comparable. "
+               "No automatic unit conversions or scientific conclusions are made. "
+               "The second dataset is not sent to AI; summary metadata is included in exports.")
+    comparison_upload = st.file_uploader("Second experiment CSV", type=["csv", "tsv", "txt"], key="comparison_upload")
+    if comparison_upload is not None:
+        try:
+            comparison_load = load_dataset(comparison_upload.getvalue(), comparison_upload.name)
+            comparison_frame = comparison_load.frame
+            st.text(f"Second file: {comparison_upload.name} · {len(comparison_frame)} rows · "
+                    f"SHA-256 {comparison_load.sha256[:16]}…")
+            st.dataframe(comparison_frame.head(8), width="stretch", hide_index=True)
+            for warning in comparison_load.warnings:
+                st.warning(warning)
+            comparison_numeric = [p.name for p in infer_columns(comparison_frame) if p.is_numeric]
+            if len(comparison_numeric) < 2:
+                st.warning("The second dataset needs at least two numeric columns with finite measurements.")
+            else:
+                cx = st.selectbox("Second experiment X column", comparison_numeric, key="comparison_x")
+                cy = st.selectbox("Second experiment Y column", [c for c in comparison_numeric if c != cx], key="comparison_y")
+                ux = st.text_input("Second experiment X unit", max_chars=MAX_UNIT_TEXT, key="comparison_unit_x").strip()
+                uy = st.text_input("Second experiment Y unit", max_chars=MAX_UNIT_TEXT, key="comparison_unit_y").strip()
+                confirm_hash = _hash({"first": load.sha256, "second": comparison_load.sha256,
+                                      "first_x": x_col, "first_y": y_col, "first_units": [unit_x, unit_y],
+                                      "cleaning": cleaning_dict, "second_x": cx, "second_y": cy,
+                                      "second_units": [ux, uy]})
+                confirmed = st.checkbox("I confirm the mapped quantities, units, methods and conditions are comparable",
+                                        value=False, key=f"comparison_confirm_{confirm_hash}")
+                if confirmed:
+                    summary, plot_data = compare_experiments(
+                        {"frame": working, "x": x_col, "y": y_col, "unit_x": unit_x, "unit_y": unit_y,
+                         "name": source_name, "sha256": load.sha256},
+                        {"frame": comparison_frame, "x": cx, "y": cy, "unit_x": ux, "unit_y": uy,
+                         "name": comparison_upload.name, "sha256": comparison_load.sha256},
+                        confirmed=confirmed,
+                    )
+                    result["comparison"] = summary
+                    st.dataframe(pd.DataFrame(summary["datasets"]), width="stretch", hide_index=True)
+                    st.text(f"Difference in paired Y means (experiment 2 - experiment 1): "
+                            f"{summary['mean_y_difference_second_minus_first']:.6g} {unit_y}")
+                    st.caption(summary["limitations"])
+                    st.caption(summary["plot_note"])
+                    st.altair_chart(alt.Chart(plot_data).mark_circle(size=45, opacity=0.7).encode(
+                        x=alt.X("x:Q", title=f"Mapped X ({unit_x})", scale=alt.Scale(zero=False)),
+                        y=alt.Y("y:Q", title=f"Mapped Y ({unit_y})", scale=alt.Scale(zero=False)),
+                        color=alt.Color("dataset:N", title="Dataset"),
+                        tooltip=["dataset:N", "x:Q", "y:Q"],
+                    ).properties(height=350), width="stretch")
+        except (DataImportError, ValueError, TypeError) as exc:
+            st.warning(f"Comparison unavailable: {_safe_error(exc)}")
 
 
 # ---------------------------------------------------------------------------

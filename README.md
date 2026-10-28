@@ -61,8 +61,9 @@ not hardcode those column names or units.
 - **D - Explore.** Mean/median/percentiles, sample and population variance,
   Student-t CI for the mean, IQR outlier *flags* (never removal), Pearson or
   Spearman correlation with p-value and caveats, sample covariance, correlation
-  heatmap. Ten chart types: scatter, line, histogram, box, correlation heatmap,
-  time series, grouped comparison, residuals, distribution/density, error bars.
+  heatmap. Eleven chart types: scatter, line, histogram, box, correlation heatmap,
+  time series, grouped comparison, residuals against X or fitted values,
+  distribution/density, error bars.
   Charts warn about unsorted lines, dual axes, means without error bars,
   heuristic bins and small groups.
 - **E - Fit.** Linear (centred weighted least squares), polynomial (1-6),
@@ -200,6 +201,22 @@ python analyze_dataset.py data/sample_voltage_current.csv \
 
 Synthetic example datasets are documented in `data/examples/README.md`. They
 are computer-generated, **not** experimental evidence.
+
+## Conditional fit uncertainty
+
+Successful unweighted linear fits with positive residual degrees of freedom
+have conditional 95% slope/intercept Student-t intervals, with assumptions
+and limitations. Weighted/nonlinear intervals and measurement accuracy are
+not inferred. An optional calculator propagates user-supplied independent
+standard uncertainties for four arithmetic operations. See
+[uncertainty scope](docs/MATHEMATICS_AND_UNCERTAINTY.md).
+
+## Offline experiment comparison
+
+The general app can compare two explicitly mapped datasets after confirmation
+of matching units and experimental compatibility. The comparison is descriptive,
+not a test of causation or statistical significance. See
+[comparison workflow and limits](docs/EXPERIMENT_COMPARISON.md).
 
 ## Key insights
 
