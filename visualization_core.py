@@ -133,6 +133,11 @@ def _base_chart(plot_type: str, frame: pd.DataFrame, columns: list[str]) -> Char
     return None
 
 
+def _axis_label(name, unit):
+    """Use only caller-provided units; never infer them from a header."""
+    return f"{name} ({unit})" if name and unit else (name or "")
+
+
 def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
     """Build one Altair chart from the caller's selected columns and options.
 
@@ -149,6 +154,8 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
     bins = min(max(int(config.get("bins", 30) or 30), 5), 100)
     fit_result = config.get("fit_result")
     numeric_columns = [c for c in (config.get("numeric_columns") or []) if c]
+    x_label = _axis_label(x_col, config.get("unit_x"))
+    y_label = _axis_label(y_col, config.get("unit_y"))
 
     def spec(chart, data: pd.DataFrame, used: list[str], *, warnings=None, notes=None) -> ChartSpec:
         return ChartSpec(
@@ -221,6 +228,7 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
     # ---- Single-column distribution plots ----
     if plot_type in (PLOT_HISTOGRAM, PLOT_DISTRIBUTION, PLOT_BOX):
         column = y_col if plot_type == PLOT_BOX else x_col
+        column_label = y_label if plot_type == PLOT_BOX else x_label
         if not column or column not in frame.columns:
             return spec(None, frame, [], warnings=["Select a numeric measurement column."])
         values = coerce_numeric(frame[column]).values
@@ -232,24 +240,31 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
             data = data.replace([np.inf, -np.inf], np.nan).dropna()
             if data.empty:
                 return spec(None, data, [column], warnings=[f"No finite values in '{column}'."])
-            chart = alt.Chart(data.head(MAX_CHART_ROWS)).mark_boxplot(extent="min-max", size=40).encode(
+            valid_count = len(data)
+            data = data.head(MAX_CHART_ROWS)
+            chart = alt.Chart(data).mark_boxplot(extent="min-max", size=40).encode(
                 x=alt.X("group:N", title=group_col or "", axis=alt.Axis(labelAngle=-30)),
-                y=alt.Y("value:Q", title=column, scale=alt.Scale(zero=False)),
+                y=alt.Y("value:Q", title=column_label, scale=alt.Scale(zero=False)),
                 color=alt.Color("group:N", legend=None) if has_group else alt.value("#2b6cb0"),
-                tooltip=[alt.Tooltip("group:N", title="Group"), alt.Tooltip("value:Q", title=column)],
+                tooltip=[alt.Tooltip("group:N", title="Group"), alt.Tooltip("value:Q", title=column_label)],
             ).properties(width="container", height=340)
             return spec(
                 chart, data, [column] + ([group_col] if has_group else []),
-                notes=["Boxes show median, quartiles and min-max whiskers; outliers are flagged, not removed.",
+                notes=[f"{valid_count} valid row(s); {len(frame) - valid_count} row(s) excluded for this chart.",
+                       "Boxes show median, quartiles and min-max whiskers; outliers are flagged, not removed.",
                        "The Y axis is not forced to start at zero so that spread remains visible."],
-                warnings=["Groups with very few observations give unstable quartiles."],
+                warnings=["Groups with very few observations give unstable quartiles."]
+                + ([f"Only the first {MAX_CHART_ROWS:,} valid rows are plotted."]
+                   if valid_count > MAX_CHART_ROWS else []),
             )
-        data = pd.DataFrame({"value": values}).replace([np.inf, -np.inf], np.nan).dropna().head(MAX_CHART_ROWS)
+        data = pd.DataFrame({"value": values}).replace([np.inf, -np.inf], np.nan).dropna()
+        valid_count = len(data)
+        data = data.head(MAX_CHART_ROWS)
         if data.empty:
             return spec(None, data, [column], warnings=[f"No finite values in '{column}'."])
         if plot_type == PLOT_HISTOGRAM:
             chart = alt.Chart(data).mark_bar(color="#2b6cb0", opacity=0.85).encode(
-                x=alt.X("value:Q", bin=alt.Bin(maxbins=bins), title=column),
+                x=alt.X("value:Q", bin=alt.Bin(maxbins=bins), title=column_label),
                 y=alt.Y("count():Q", title="Count"),
                 tooltip=[alt.Tooltip("count():Q", title="Count")],
             )
@@ -258,15 +273,17 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
             chart = alt.Chart(data).transform_density(
                 "value", as_=["value", "density"]
             ).mark_area(color="#2b6cb0", opacity=0.5).encode(
-                x=alt.X("value:Q", title=column),
+                x=alt.X("value:Q", title=column_label),
                 y=alt.Y("density:Q", title="Estimated density"),
             )
             note = "Kernel density is a smoothing estimate, not a measured probability; bandwidth affects its shape."
         return spec(
             chart.properties(width="container", height=340), data, [column],
-            notes=[note],
-            warnings=["A constant column produces a single spike and is not informative."]
-            if np.ptp(data["value"].to_numpy()) == 0 else [],
+            notes=[f"{valid_count} valid row(s); {len(frame) - valid_count} row(s) excluded for this chart.", note],
+            warnings=(["A constant column produces a single spike and is not informative."]
+                      if np.ptp(data["value"].to_numpy()) == 0 else [])
+            + ([f"Only the first {MAX_CHART_ROWS:,} valid rows are plotted."]
+               if valid_count > MAX_CHART_ROWS else []),
         )
 
     # ---- Grouped comparison (mean per category) ----
@@ -297,18 +314,22 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
         )
 
     # ---- Two-column plots: scatter, line, time series, error bars ----
-    x_name = time_col if plot_type == PLOT_TIME_SERIES else x_col
+    x_name = (time_col or x_col) if plot_type == PLOT_TIME_SERIES else x_col
     y_name = y_col
     if not x_name or not y_name:
         return spec(None, frame, [], warnings=["Select both an X and a Y column for this plot."])
-    missing = [c for c in (x_name, y_name, unc_col) if c and c not in frame.columns]
+    if plot_type == PLOT_TIME_SERIES:
+        time_unit = config.get("unit_x") if x_name == x_col else config.get("unit_time")
+        x_label = _axis_label(x_name, time_unit)
+    missing = [c for c in (x_name, y_name, unc_col if plot_type == PLOT_ERRORBAR else None)
+               if c and c not in frame.columns]
     if missing:
         return spec(None, frame, [], warnings=[f"Missing column(s): {', '.join(missing)}."])
     if plot_type == PLOT_ERRORBAR and not unc_col:
         return spec(None, frame, [],
                     warnings=["Select an uncertainty column to draw error bars. LabLens will not invent uncertainties."])
 
-    has_unc = bool(unc_col and unc_col in frame.columns)
+    has_unc = bool(plot_type == PLOT_ERRORBAR and unc_col and unc_col in frame.columns)
     has_group = bool(group_col and group_col in frame.columns)
     is_temporal = (plot_type == PLOT_TIME_SERIES
                    and not pd.api.types.is_numeric_dtype(frame[x_name]))
@@ -333,13 +354,15 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
         data["err"] = coerce_numeric(frame[unc_col]).values
         err = data["err"].to_numpy(dtype=float, na_value=np.nan)
         finite &= np.isfinite(err) & (err >= 0)
+    valid_count = int(finite.sum())
+    excluded_count = len(frame) - valid_count
     data = data[finite].head(MAX_CHART_ROWS).reset_index(drop=True)
     if data.empty:
         return spec(None, data, [x_name, y_name],
                     warnings=["No complete finite rows remain for the selected columns (and uncertainties, if any)."])
 
     warnings: list[str] = []
-    notes: list[str] = []
+    notes: list[str] = [f"{valid_count} valid row(s); {excluded_count} row(s) excluded for this chart."]
     if plot_type in (PLOT_LINE, PLOT_TIME_SERIES):
         original = data["x"].to_numpy()
         data = data.sort_values("x", kind="stable").reset_index(drop=True)
@@ -349,13 +372,13 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
         if data["x"].duplicated().any():
             warnings.append("Repeated X values are connected as one series; consider grouping instead.")
 
-    x_encoding = (alt.X("x:T", title=x_name) if is_temporal
-                  else alt.X("x:Q", title=x_name, scale=alt.Scale(zero=False)))
-    y_encoding = alt.Y("y:Q", title=y_name, scale=alt.Scale(zero=False))
+    x_encoding = (alt.X("x:T", title=x_label) if is_temporal
+                  else alt.X("x:Q", title=x_label, scale=alt.Scale(zero=False)))
+    y_encoding = alt.Y("y:Q", title=y_label, scale=alt.Scale(zero=False))
     color = (alt.Color("group:N", legend=alt.Legend(title=group_col))
              if has_group else alt.value("#2b6cb0"))
-    tooltip = [alt.Tooltip("x:T" if is_temporal else "x:Q", title=x_name),
-               alt.Tooltip("y:Q", title=y_name, format=".6g")]
+    tooltip = [alt.Tooltip("x:T" if is_temporal else "x:Q", title=x_label),
+               alt.Tooltip("y:Q", title=y_label, format=".6g")]
     if has_unc:
         tooltip.append(alt.Tooltip("err:Q", title=unc_col, format=".6g"))
     if has_group:
@@ -366,17 +389,17 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
         data["lo"] = data["y"] - data["err"]
         data["hi"] = data["y"] + data["err"]
         layers.append(alt.Chart(data).mark_errorbar(color="#666").encode(
-            x=alt.X("x:Q", title=x_name, scale=alt.Scale(zero=False)),
-            y=alt.Y("lo:Q", title=y_name), y2="hi:Q",
+            x=alt.X("x:Q", title=x_label, scale=alt.Scale(zero=False)),
+            y=alt.Y("lo:Q", title=y_label), y2="hi:Q",
         ))
         layers.append(alt.Chart(data).mark_circle(size=55, color="#2b6cb0").encode(
-            x=alt.X("x:Q", title=x_name, scale=alt.Scale(zero=False)),
+            x=alt.X("x:Q", title=x_label, scale=alt.Scale(zero=False)),
             y=y_encoding, tooltip=tooltip,
         ))
         notes.append(f"Error bars are ±1 value from '{unc_col}' exactly as supplied. Verify whether "
                      "the source reports standard deviation, standard error, or instrument accuracy — "
                      "they are not interchangeable.")
-    elif plot_type == PLOT_LINE:
+    elif plot_type in (PLOT_LINE, PLOT_TIME_SERIES):
         encode_args = dict(x=x_encoding, y=y_encoding, color=color, tooltip=tooltip)
         if has_group:
             encode_args["detail"] = "group:N"
@@ -386,7 +409,8 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
             x=x_encoding, y=y_encoding, color=color, tooltip=tooltip,
         ))
 
-    if plot_type == PLOT_SCATTER and fit_result is not None and getattr(fit_result, "success", False):
+    if (plot_type == PLOT_SCATTER and config.get("show_fit", True)
+            and fit_result is not None and getattr(fit_result, "success", False)):
         from fitting_core import predict_with_flags
         prediction = predict_with_flags(fit_result, fit_result.x_fit)
         if prediction.get("valid"):
@@ -395,8 +419,8 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
                 "y": np.asarray(prediction["predicted"], dtype=float),
             }).replace([np.inf, -np.inf], np.nan).dropna().sort_values("x")
             layers.append(alt.Chart(fitted).mark_line(color="#b22222", strokeWidth=2).encode(
-                x=alt.X("x:Q", title=x_name, scale=alt.Scale(zero=False)),
-                y=alt.Y("y:Q", title=y_name, scale=alt.Scale(zero=False)),
+                x=alt.X("x:Q", title=x_label, scale=alt.Scale(zero=False)),
+                y=alt.Y("y:Q", title=y_label, scale=alt.Scale(zero=False)),
             ))
             notes.append(f"Red line: fitted {fit_result.label}. It is a model, not measured data.")
 
@@ -405,7 +429,7 @@ def build_chart(plot_type: str, frame: pd.DataFrame, config: dict) -> ChartSpec:
                         "can imply relationships that depend entirely on scale choices. Plot each Y separately.")
     if plot_type in (PLOT_SCATTER, PLOT_LINE, PLOT_ERRORBAR):
         notes.append("Axes are not forced to start at zero; the displayed range is chosen to show the data.")
-    if len(data) >= MAX_CHART_ROWS:
+    if valid_count > MAX_CHART_ROWS:
         warnings.append(f"Only the first {MAX_CHART_ROWS:,} rows are plotted; filter or aggregate the data first.")
 
     chart = layers[0] if len(layers) == 1 else alt.layer(*layers)
@@ -423,6 +447,8 @@ def render_png(plot_type: str, frame: pd.DataFrame, config: dict) -> bytes:
     data = spec.frame
     x_col, y_col = config.get("x"), config.get("y")
     time_col = config.get("time")
+    x_label = _axis_label(x_col, config.get("unit_x"))
+    y_label = _axis_label(y_col, config.get("unit_y"))
     extra: list[str] = []
 
     try:
@@ -433,7 +459,7 @@ def render_png(plot_type: str, frame: pd.DataFrame, config: dict) -> bytes:
             values = data["value"].to_numpy(dtype=float)
             ax.hist(values, bins=min(max(int(config.get("bins", 30) or 30), 5), 100),
                     color="#2b6cb0", alpha=0.85, density=plot_type == PLOT_DISTRIBUTION)
-            ax.set_xlabel(x_col or "value")
+            ax.set_xlabel(x_label or "value")
             ax.set_ylabel("Density" if plot_type == PLOT_DISTRIBUTION else "Count")
         elif plot_type == PLOT_HEATMAP:
             from statistics_core import correlation_matrix
@@ -452,7 +478,7 @@ def render_png(plot_type: str, frame: pd.DataFrame, config: dict) -> bytes:
             labels = [str(item) for item in data["group"].unique()]
             ax.boxplot([data.loc[data["group"].astype(str) == label, "value"].to_numpy()
                         for label in labels], tick_labels=labels)
-            ax.set_ylabel(y_col or x_col)
+            ax.set_ylabel(y_label or x_label)
         elif plot_type == PLOT_RESIDUALS:
             ax.scatter(data["x"], data["residual"], s=26, alpha=0.8)
             ax.axhline(0, color="#b22222", linestyle="--")
@@ -464,13 +490,34 @@ def render_png(plot_type: str, frame: pd.DataFrame, config: dict) -> bytes:
             extra.append("Bars show means; no uncertainty was inferred.")
         else:
             style = "-" if plot_type in (PLOT_LINE, PLOT_TIME_SERIES) else "o"
-            ax.plot(data["x"], data["y"], style, markersize=5, alpha=0.85)
+            if "group" in data.columns:
+                for label, group_data in data.groupby("group", sort=False, dropna=False):
+                    ax.plot(group_data["x"], group_data["y"], style, markersize=5, alpha=0.85,
+                            label=str(label))
+                ax.legend(title=config.get("group"))
+            else:
+                ax.plot(data["x"], data["y"], style, markersize=5, alpha=0.85)
             if plot_type == PLOT_ERRORBAR and {"lo", "hi"}.issubset(data.columns):
                 ax.errorbar(data["x"], data["y"],
                             yerr=[data["y"] - data["lo"], data["hi"] - data["y"]],
                             fmt="none", ecolor="#777", capsize=3)
-            ax.set_xlabel(time_col or x_col if plot_type == PLOT_TIME_SERIES else x_col)
-            ax.set_ylabel(y_col)
+            if plot_type == PLOT_SCATTER and config.get("show_fit", True):
+                fit_result = config.get("fit_result")
+                if fit_result is not None and getattr(fit_result, "success", False):
+                    from fitting_core import predict_with_flags
+                    prediction = predict_with_flags(fit_result, fit_result.x_fit)
+                    if prediction.get("valid"):
+                        fitted = pd.DataFrame({"x": fit_result.x_fit, "y": prediction["predicted"]})
+                        fitted = fitted.replace([np.inf, -np.inf], np.nan).dropna().sort_values("x")
+                        ax.plot(fitted["x"], fitted["y"], color="#b22222", label="Fitted model")
+                        ax.legend()
+            if plot_type == PLOT_TIME_SERIES:
+                time_name = time_col or x_col
+                time_unit = config.get("unit_x") if time_name == x_col else config.get("unit_time")
+                ax.set_xlabel(_axis_label(time_name, time_unit))
+            else:
+                ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
         ax.set_title(PLOT_TYPES.get(plot_type, plot_type))
         if spec.notes or spec.warnings or extra:
             text = " | ".join([*spec.notes, *spec.warnings, *extra])[:600]

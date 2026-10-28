@@ -163,6 +163,7 @@ def analyze_csv(
         "x": x_col, "y": y_col, "group": group, "time": time,
         "uncertainty": uncertainty, "secondary_y": [], "bins": 30,
         "fit_result": fit, "numeric_columns": numeric_columns,
+        "unit_x": unit_x, "unit_y": unit_y,
         "correlation_method": correlation_method,
     }
     chart_files: dict[str, bytes] = {}
