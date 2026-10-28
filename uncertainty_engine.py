@@ -112,3 +112,67 @@ def propagate_independent(operation: str, a: float, u_a: float, unit_a: str,
         "limitations": "Not a confidence or prediction interval; systematic effects, covariance and higher-order terms are not assessed. Unit labels are user supplied and not dimensionally validated.",
         "warning": warning,
     }
+
+
+def linear_prediction_intervals(fit, candidates) -> dict:
+    """95% intervals for mean response and a single new observation, unweighted OLS.
+
+    Uses the fitted X values and residuals, never an assumed instrument error.
+    Prediction intervals require a future observation to share the same error model.
+    """
+    import numpy as np
+
+    base = {
+        "method": "Two-sided 95% Student-t intervals for unweighted linear regression",
+        "assumptions": ASSUMPTIONS + " A future observation must have the same error variance and be independent.",
+        "limitations": "Mean-response intervals are not individual prediction intervals. "
+                       "Both are conditional on the model and error assumptions; they exclude X uncertainty, "
+                       "systematic error and model selection. Extrapolation is especially unreliable.",
+    }
+
+    def unavailable(reason):
+        return {**base, "status": "unavailable", "reason": reason, "rows": []}
+
+    if not getattr(fit, "success", False) or getattr(fit, "model", None) != "linear":
+        return unavailable("A successful linear fit is required.")
+    if getattr(fit, "weighted", None) is not False:
+        return unavailable("Intervals are not implemented for weighted fits.")
+    try:
+        x = np.asarray(fit.x_fit, dtype=float)
+        residuals = np.asarray(fit.residuals, dtype=float)
+        values = np.asarray(candidates, dtype=float)
+    except (TypeError, ValueError):
+        return unavailable("Finite fitted data and candidate X values are required.")
+    n = getattr(fit, "n_observations", 0)
+    if (x.ndim != 1 or residuals.ndim != 1 or values.ndim != 1 or
+            len(x) != n or len(residuals) != n or n < 3 or not 0 < len(values) <= 50 or
+            not np.all(np.isfinite(x)) or not np.all(np.isfinite(residuals)) or not np.all(np.isfinite(values))):
+        return unavailable("At least three finite fit pairs and 1 to 50 finite candidate values are required.")
+    try:
+        slope = float(fit.parameters["slope"])
+        intercept = float(fit.parameters["intercept"])
+        with np.errstate(all="ignore"):
+            xbar = float(np.mean(x))
+            sxx = float(np.sum((x - xbar) ** 2))
+            residual_variance = float(np.sum(residuals ** 2) / (n - 2))
+            critical = float(t.ppf(0.975, n - 2))
+            predicted = slope * values + intercept
+            leverage = 1 / n + (values - xbar) ** 2 / sxx
+            mean_margin = critical * np.sqrt(residual_variance * leverage)
+            prediction_margin = critical * np.sqrt(residual_variance * (1 + leverage))
+            lower_mean, upper_mean = predicted - mean_margin, predicted + mean_margin
+            lower_prediction, upper_prediction = predicted - prediction_margin, predicted + prediction_margin
+        if not all(math.isfinite(v) for v in (slope, intercept, xbar, sxx, residual_variance, critical)) or sxx <= 0:
+            return unavailable("A finite, nonconstant fitted X range and finite residual variance are required.")
+        if not all(np.all(np.isfinite(v)) for v in (predicted, lower_mean, upper_mean, lower_prediction, upper_prediction)):
+            return unavailable("Interval calculation was nonfinite; check numerical range.")
+    except (KeyError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+        return unavailable("Fit parameters or interval inputs are invalid.")
+    rows = [{"candidate_x": float(v), "predicted_y": float(p),
+             "mean_lower": float(ml), "mean_upper": float(mu),
+             "prediction_lower": float(pl), "prediction_upper": float(pu),
+             "range_flag": "in_range" if x.min() <= v <= x.max() else "extrapolated"}
+            for v, p, ml, mu, pl, pu in zip(values, predicted, lower_mean, upper_mean,
+                                             lower_prediction, upper_prediction, strict=True)]
+    return {**base, "status": "conditional", "reason": None,
+            "degrees_of_freedom": n - 2, "rows": rows}

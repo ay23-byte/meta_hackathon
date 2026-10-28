@@ -183,3 +183,60 @@ def test_time_series_summary_is_descriptive_and_bounded(ctx):
     bad = execute_tool("time_series_summary",
                        {"time": "x", "value": "y", "max_lag": 9}, ctx)
     assert not bad.ok and "maximum" in bad.error
+
+
+def test_timed_out_tool_cannot_mutate_audited_context(monkeypatch, ctx):
+    import time
+
+    import agent_tools
+
+    def slow_tool(worker_ctx, params):
+        time.sleep(0.1)
+        worker_ctx.roles["x"] = "late mutation"
+        return {"ok": True}
+
+    monkeypatch.setattr(agent_tools, "MAX_TOOL_S", 0.01)
+    monkeypatch.setitem(agent_tools.TOOL_REGISTRY, "slow_test", agent_tools.ToolSpec("slow_test", slow_tool, {}))
+    ctx.deadline = time.monotonic() + 1
+    original_roles = dict(ctx.roles)
+    result = agent_tools.execute_tool("slow_test", {}, ctx)
+    assert not result.ok and "budget" in result.error
+    assert not agent_tools.execute_tool("slow_test", {}, ctx).ok
+    time.sleep(0.15)  # The timed-out worker has completed on its isolated copy.
+    assert ctx.roles == original_roles
+
+
+def test_tool_exception_redacts_configured_secret(monkeypatch, ctx):
+    import time
+
+    import agent_tools
+
+    secret = "unit-test-sensitive-value"
+    monkeypatch.setenv("BASETEN_API_KEY", secret)
+    def failing_tool(worker_ctx, params):
+        raise ValueError(secret)
+    monkeypatch.setitem(agent_tools.TOOL_REGISTRY, "fail_test", agent_tools.ToolSpec("fail_test", failing_tool, {}))
+    ctx.deadline = time.monotonic() + 1
+    result = agent_tools.execute_tool("fail_test", {}, ctx)
+    assert not result.ok and secret not in result.error and "[redacted]" in result.error
+
+
+def test_weighted_fit_aligns_uncertainties_to_the_selected_axes():
+    frame = pd.DataFrame({"x": [0., 1., 2., 3., 4.],
+                          "y": [1., float("nan"), 5., 7., 9.],
+                          "other": [float("nan"), 3., 5., 7., 9.],
+                          "sigma": [0.1, 0.2, 0.3, 0.4, 0.5]})
+    c = ToolContext(frame=frame, load_info={}, deadline=float("inf"), working=frame,
+                    pair_mask=np.array([True, False, True, True, True]),
+                    x_values=np.array([0., 2., 3., 4.]))
+    result = execute_tool("fit_curve", {"x": "x", "y": "other", "model": "linear", "weights": "sigma"}, c)
+    assert result.ok, result.error
+    assert result.result["weighted"] is True
+    assert result.result["parameters"]["slope"] == pytest.approx(2.0)
+    assert c.fits[result.result["fit_ref"]].n_observations == 4
+
+
+def test_weighted_fit_rejects_unrepresentable_inverse_variances(ctx):
+    ctx.working["sigma"] = 1e-200
+    result = execute_tool("fit_curve", {"x": "x", "y": "y", "model": "linear", "weights": "sigma"}, ctx)
+    assert not result.ok and "numerical range" in result.error

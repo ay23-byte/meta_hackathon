@@ -155,3 +155,53 @@ def test_markdown_report_separates_live_ai_and_offline_mock(tmp_path):
     assert "OFFLINE MOCK report (deterministic template, NOT AI)" in mock_report
     assert "NOT AI" in mock_report
     assert "AI-generated interpretation" not in mock_report
+
+
+def test_cli_preflights_all_targets_before_any_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyze_dataset, "export_bundle",
+                        lambda *args, **kwargs: {"first.txt": b"first", "../escape.txt": b"bad"})
+    with pytest.raises(ValueError):
+        analyze_dataset.analyze_csv(SAMPLE, tmp_path)
+    assert not (tmp_path / "first.txt").exists()
+
+
+def test_cli_never_overwrites_its_input_dataset(tmp_path):
+    source = tmp_path / "cleaned_data.csv"
+    original = SAMPLE.read_bytes()
+    source.write_bytes(original)
+    with pytest.raises(ValueError, match="overwrite the input"):
+        analyze_dataset.analyze_csv(source, tmp_path)
+    assert source.read_bytes() == original
+    assert not (tmp_path / "results.json").exists()
+
+
+def test_cli_refuses_symlink_export_targets(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    output = tmp_path / "output"
+    output.mkdir()
+    try:
+        (output / "plots").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlinks are unavailable in this environment")
+    with pytest.raises(ValueError, match="symbolic link"):
+        analyze_dataset.analyze_csv(SAMPLE, output)
+    assert not list(outside.iterdir())
+    assert not (output / "results.json").exists()
+
+
+def test_cli_refuses_hard_link_to_input(tmp_path):
+    import os
+
+    source = tmp_path / "input.csv"
+    source.write_bytes(SAMPLE.read_bytes())
+    original = source.read_bytes()
+    out = tmp_path / "out"
+    out.mkdir()
+    try:
+        os.link(source, out / "results.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard links are unavailable in this environment")
+    with pytest.raises(ValueError, match="overwrite the input"):
+        analyze_dataset.analyze_csv(source, out)
+    assert source.read_bytes() == original

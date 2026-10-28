@@ -45,3 +45,81 @@ Offline deterministic computation must stay authoritative; no raw-data or extern
 - [x] User confirmation is tied to every input; user-supplied input, method, result and limitations appear in existing JSON and Markdown/ZIP exports only when confirmed, not in AI context. Targeted uncertainty/UI/export suite: **69 passed**; Ruff passed.
 - [ ] Correlated error propagation, arbitrary equations, Monte Carlo, general dimensional analysis and broader platform features remain incomplete. See `MATHEMATICS_AND_UNCERTAINTY.md`.
 - [x] Final regression after propagation: **521 passed, 2 skipped**; Ruff, compileall and diff check passed. Streamlit root and health returned HTTP 200. AppTest exercised the panel; actual-browser and live-provider checks were not performed.
+
+## Hackathon readiness increment — 28 Oct 2026
+
+- [x] Re-audited current entry points, demo, science and export documentation;
+  baseline full offline suite: 521 passed, 2 live-provider tests skipped; Ruff
+  and dependency check passed. This was a focused audit, not a certification
+  or a line-by-line security review of the entire repository.
+- [x] Exposed the existing synthetic calibration demo in the main app without
+  an upload, with an explicit synthetic-data disclaimer. Added an executable
+  walkthrough and UI regression test. The dataset is not experimental evidence.
+- [x] Corrected linear parameter covariance for absolute user-supplied inverse
+  variances; residual scatter no longer falsely reduces known measurement
+  uncertainty to zero. Unweighted two-point fits no longer invent a residual-
+  based standard error. These estimates are conditional on their assumptions.
+- [x] Included Python and selected package versions in JSON and Markdown (and
+  thus ZIP) records, with no environment variables, paths or credentials. This
+  allowlist is not a complete environment lock; the standalone CSV has no
+  embedded provenance. Corrected the pitch and demo text accordingly.
+- [ ] Actual browser smoke, live Muse Spark end-to-end verification, user impact
+  study, demo recording and participant-portal submission remain outstanding.
+  Full literature grounding, generalized uncertainty and other items above
+  remain incomplete. No win, clinical utility or scientific certification is
+  implied.
+- [x] Final verification: focused fitting/demo/schema/UI/CLI/provider suite
+  **81 passed**; full offline suite **525 passed, 2 skipped** (live-provider
+  opt-in); Ruff, compileall and `git diff --check` passed. Streamlit root and
+  health endpoints returned HTTP 200, and AppTest selected the demo. These
+  checks are not an actual-browser walkthrough or a live-provider test.
+
+## Follow-up — browser smoke and conditional prediction intervals
+
+- [x] Ran a real headless Chromium browser against the running Streamlit app:
+  selected the synthetic calibration file and X/Y columns, entered an in-range
+  and an extrapolated candidate, generated the explicitly labelled offline
+  mock, downloaded JSON and ZIP, and opened the ZIP. The JSON recorded 15
+  rows, 12 fitted pairs, slope 2.5, intercept 0.1, the extrapolation flag and
+  conditional intervals; the report included those intervals. No browser
+  JavaScript page errors were recorded. This is one scripted Linux/headless
+  path, not a comprehensive manual, Windows, mobile or accessibility review.
+- [x] Added unweighted linear 95% mean-response and single-observation
+  prediction intervals, with assumptions and limitations in the UI and
+  JSON/Markdown/ZIP. Weighted/nonlinear/two-point fits explicitly report
+  unavailable; no measured uncertainty is inferred. Analytical references,
+  invalid inputs, extrapolation, exports and AppTest are covered. The CLI does
+  not yet offer these intervals.
+- [x] Uncertainty-column hints no longer automatically enable weighted fitting:
+  the selection starts at `(none)` and the user must explicitly choose a
+  column. Corrected an exponential-model description that incorrectly claimed
+  its amplitude was constrained positive; the optimizer remains unconstrained.
+- [ ] Live Muse Spark round trip, participant portal checks, recording and a
+  user impact study still need external access or human participation. General
+  uncertainty, grounded chat/literature, extended formats and broad hardening
+  remain incomplete; this increment does not claim full platform completion.
+- [x] Follow-up verification: focused suite **58 passed**; full offline suite
+  **530 passed, 2 skipped** (live-provider tests); Ruff, compileall and diff
+  check passed. The seven offline agent demo cases reached expected states.
+  The Chromium scenario was rerun after the final UI change and passed.
+
+## Follow-up — whole-project checkup (28 Oct 2026)
+
+- [x] Reviewed the major ingestion, analysis, fitting, uncertainty, plotting,
+  export, provider, agent, legacy, CI and demo paths. Documented the exact
+  scope, fixes and limitations in `PROJECT_CHECKUP.md`; this is not an
+  exhaustive proof or formal security/scientific audit.
+- [x] Fixed CSV field errors and multiline headers, numerical underflow and
+  overflow edge cases, selected-axis agent weight alignment, representability
+  of supplied inverse variances, agent timeout state isolation and exception
+  redaction, unsafe CLI export targets, and undefined prediction messaging.
+- [x] Verification: focused agent, fit, importer, statistics, CLI/export and
+  UI runs passed; final full suite **550 passed, 2 skipped** (live-provider
+  tests); pip check, Ruff, compileall and diff check passed; seven offline
+  agent scenarios reached expected states. Linux headless Chromium selected the
+  synthetic demo, generated an offline mock, checked prediction intervals and
+  downloaded JSON/ZIP; the first attempt timed out on a UI selector and the
+  retry passed. Streamlit health returned HTTP 200.
+- [ ] Live provider, broader browser/device coverage, remote Windows CI for
+  these unpushed changes, human impact validation and submission remain
+  unverified. General platform gaps remain as documented above.

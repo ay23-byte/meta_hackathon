@@ -42,3 +42,27 @@ def test_demo_cli_produces_known_computed_results(tmp_path):
     assert "slope=2.5" in report and "R²=1" in report
     cleaned = (tmp_path / "cleaned_data.csv").read_text(encoding="utf-8-sig")
     assert len(cleaned.strip().splitlines()) == 16  # header + 15 retained rows
+
+
+def test_demo_selectable_in_main_app_without_upload():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(ROOT / "general_app.py"), default_timeout=60).run()
+    examples = next(item for item in app.selectbox if item.label == "Or load a bundled synthetic example")
+    assert DEMO.name in examples.options
+    examples.select(DEMO.name).run()
+    assert not app.exception
+    assert any("Synthetic demonstration data" in item.value for item in app.info)
+    assert any("15" in str(item.value) for item in app.metric)
+
+
+def test_demo_does_not_automatically_apply_inferred_uncertainties():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(ROOT / "general_app.py"), default_timeout=60).run()
+    next(w for w in app.selectbox if w.label == "Or load a bundled synthetic example").select(DEMO.name).run()
+    sigma = next(w for w in app.selectbox if w.label == "Uncertainty column (1 sigma)")
+    assert sigma.value == "(none)"
+    sigma.select("sigma_mV").run()
+    assert not app.exception and not app.error
+    assert any("absolute inverse variances" in warning.value for warning in app.warning)

@@ -87,3 +87,23 @@ def test_bounds_and_empty_input_raise_data_import_error():
 def test_unquoted_ragged_rows_are_rejected_not_silently_repaired():
     with pytest.raises(DataImportError):
         read_csv_robust(b"a,b\n1,2,3\n4,5,6\n", source_name="ragged.csv")
+
+
+def test_oversized_field_is_a_user_facing_import_error():
+    import csv
+
+    from data_io import DataImportError, read_csv_robust
+
+    payload = b"x,y\n1," + b"a" * (csv.field_size_limit() + 1) + b"\n"
+    with pytest.raises(DataImportError, match="field-size limit"):
+        read_csv_robust(payload)
+
+
+def test_multiline_quoted_header_detects_duplicate_names():
+    from data_io import read_csv_robust
+
+    data = b'"first\nline","first\nline",y\n1,2,3\n4,5,6\n'
+    loaded = read_csv_robust(data)
+    assert loaded.duplicate_headers == ["first\nline"]
+    assert len(loaded.frame.columns) == 3
+    assert len(loaded.frame) == 2

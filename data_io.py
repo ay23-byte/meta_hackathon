@@ -121,11 +121,13 @@ def sniff_delimiter(text: str, delimiters: str = DELIMITERS) -> str:
 
 
 def _header_labels(text: str, delimiter: str) -> list[str]:
-    first_line = text.splitlines()[0] if text.splitlines() else ""
+    # The first CSV record can span physical lines inside quoted column names.
     try:
-        return next(csv.reader([first_line], delimiter=delimiter))
-    except (csv.Error, StopIteration):
-        return [first_line]
+        return next(csv.reader(io.StringIO(text), delimiter=delimiter))
+    except StopIteration:
+        return []
+    except csv.Error as exc:
+        raise DataImportError("The CSV header could not be parsed; a field may be too long or malformed.") from exc
 
 
 def _check_field_counts(text: str, delimiter: str) -> None:
@@ -138,18 +140,21 @@ def _check_field_counts(text: str, delimiter: str) -> None:
     import csv
 
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-    header = next(reader, None)
-    if not header:
-        raise DataImportError("The CSV has no header row.")
-    width = len(header)
-    for line_number, row in enumerate(reader, start=2):
-        if not row or all(not str(cell).strip() for cell in row):
-            continue
-        if len(row) > width:
-            raise DataImportError(
-                f"Row {line_number} has {len(row)} fields but the header has {width}. "
-                "Check for an unquoted delimiter or a missing header entry."
-            )
+    try:
+        header = next(reader, None)
+        if not header:
+            raise DataImportError("The CSV has no header row.")
+        width = len(header)
+        for row in reader:
+            if not row or all(not str(cell).strip() for cell in row):
+                continue
+            if len(row) > width:
+                raise DataImportError(
+                    f"Row ending at line {reader.line_num} has {len(row)} fields but the header has {width}. "
+                    "Check for an unquoted delimiter or a missing header entry."
+                )
+    except csv.Error as exc:
+        raise DataImportError("Could not parse the CSV; a field may exceed the parser's field-size limit or be malformed.") from exc
 
 
 def _find_duplicate_headers(labels: list[str]) -> list[str]:

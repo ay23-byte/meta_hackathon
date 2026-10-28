@@ -189,7 +189,8 @@ def apply_domain(module_id: str, fit_result, config: dict) -> dict:
         )
         result["warnings"].append(
             "Ohm's law is an assumption chosen by the user, not a conclusion derived from the fit. "
-            "A non-zero intercept, heating, or a non-linear region would invalidate it."
+            "A non-zero intercept or departures from linearity warrant further investigation; "
+            "their causes and the model's validity cannot be established from this fit alone."
         )
         return result
 

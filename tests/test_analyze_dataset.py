@@ -182,3 +182,10 @@ def test_cli_agent_question_is_written_to_audit(tmp_path):
     assert audit["research_question"] == question
     assert audit["question_source"] == "user"
     assert audit["final"]["state"] == "DONE"
+
+
+def test_cli_rejects_unrepresentable_inverse_variance(tmp_path):
+    source = tmp_path / "tiny_uncertainty.csv"
+    source.write_text("x,y,sigma\n1,2,1e-200\n2,4,1e-200\n3,6,1e-200\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="numerical range"):
+        analyze_dataset.analyze_csv(source, tmp_path / "out", x="x", y="y", uncertainty="sigma")

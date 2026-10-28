@@ -30,7 +30,13 @@ from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
 from domain_modules import apply_domain
-from fitting_core import MODEL_SPECS, compare_models, fit_model, suggest_models
+from fitting_core import (
+    MODEL_SPECS,
+    compare_models,
+    fit_model,
+    inverse_variance_weights,
+    suggest_models,
+)
 from result_schema import ai_context, build_result, export_bundle, safe_archive_name
 from statistics_core import (
     correlation,
@@ -121,7 +127,7 @@ def analyze_csv(
             dtype=float,
         )[cleaned.usable_pairs(x_col, y_col)]
         if len(candidate) == len(x_values) and np.all(np.isfinite(candidate)) and np.all(candidate > 0):
-            weights = 1.0 / candidate**2
+            weights = inverse_variance_weights(candidate)
         else:
             raise ValueError(
                 "The uncertainty column must contain finite positive 1-sigma values in every fitted row."
@@ -253,8 +259,26 @@ def analyze_csv(
     destination.mkdir(parents=True, exist_ok=True)
     exports = export_bundle(result, cleaned_frame=cleaned.working,
                             descriptive_table=stats_table, charts=chart_files)
+    # Preflight all targets before writing any file. Lexically safe archive
+    # names alone do not prevent a pre-existing symlink from escaping the
+    # output directory, or an export from overwriting the input dataset.
+    root = destination.resolve()
+    targets = []
     for name, payload in exports.items():
         target = destination / safe_archive_name(name)
+        relative = target.relative_to(destination)
+        path = destination
+        for part in relative.parts:
+            path = path / part
+            if path.is_symlink():
+                raise ValueError("Export path contains a symbolic link; choose a clean output directory.")
+        resolved = target.resolve()
+        if not resolved.is_relative_to(root):
+            raise ValueError("Export path escapes the output directory.")
+        if resolved == source.resolve() or (target.exists() and target.samefile(source)):
+            raise ValueError("An export would overwrite the input dataset; choose a different output directory.")
+        targets.append((target, payload))
+    for target, payload in targets:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
     return result

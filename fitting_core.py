@@ -44,7 +44,7 @@ MODEL_SPECS = {
     },
     MODEL_EXPONENTIAL: {
         "label": "Exponential  y = A*exp(k*x) + C",
-        "assumptions": "Exponential growth/decay with an additive offset; A must be positive by construction.",
+        "assumptions": "Exponential model with additive offset; A is not constrained positive. Optimisation may find a local minimum.",
         "extra": [],
     },
     MODEL_LOGARITHMIC: {
@@ -98,6 +98,18 @@ class FitResult:
         }
 
 
+def inverse_variance_weights(uncertainties) -> np.ndarray:
+    """Convert positive finite 1-sigma values to representable inverse variances."""
+    values = np.asarray(uncertainties, dtype=float)
+    if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values <= 0):
+        raise ValueError("Uncertainties must be finite positive 1-sigma values.")
+    with np.errstate(all="ignore"):
+        weights = np.square(1.0 / values)
+    if not np.all(np.isfinite(weights)) or np.any(weights <= 0):
+        raise ValueError("Inverse-variance weights are outside the numerical range; rescale the data and uncertainty units.")
+    return weights
+
+
 def _prepare_pairs(x, y, weights=None) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     raw_x = pd_to_numeric(x)
     raw_y = pd_to_numeric(y)
@@ -120,6 +132,10 @@ def pd_to_numeric(values) -> np.ndarray:
     ).to_numpy(dtype=float)
 
 
+class _UnreliableFitMetrics(ValueError):
+    """Numerical range prevents meaningful fit diagnostics."""
+
+
 def _metrics(y: np.ndarray, fitted: np.ndarray, residuals: np.ndarray, n_params: int,
              weights: np.ndarray | None = None) -> dict:
     n = int(y.size)
@@ -128,6 +144,11 @@ def _metrics(y: np.ndarray, fitted: np.ndarray, residuals: np.ndarray, n_params:
     chi2 = float(np.sum(w * residuals**2))
     ss_res = chi2
     ss_tot = float(np.sum(w * (y - np.average(y, weights=w)) ** 2))
+    # Squaring tiny numbers can underflow to zero: do not mistake a varying
+    # response or imperfect fit for a constant response or a perfect fit.
+    if ((chi2 == 0.0 and np.any(residuals != 0)) or
+            (ss_tot == 0.0 and np.any(y != y[0]))):
+        raise _UnreliableFitMetrics("Fit diagnostics underflowed; rescale the measurements and retry.")
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
     result = {
         "n_observations": n,
@@ -213,22 +234,37 @@ def fit_linear(x, y, weights=None, *, x_label="x", y_label="y") -> FitResult:
             "may be too large or too closely spaced.",
             n_observations=n, n_excluded=n_excluded,
         )
-    metrics = _metrics(y_fit, fitted, residuals, 2, w)
+    try:
+        metrics = _metrics(y_fit, fitted, residuals, 2, w)
+    except _UnreliableFitMetrics as exc:
+        return _failure(MODEL_LINEAR, str(exc), n_observations=n, n_excluded=n_excluded)
 
-    sigma2 = metrics.get("reduced_chi2")
+    # For supplied absolute 1-sigma measurement uncertainties, covariance is
+    # (X^T W X)^-1; scaling by residual chi-square would contradict the
+    # absolute-sigma convention used by the nonlinear fitter. In unweighted
+    # OLS, estimate the common variance from residuals only with positive df.
+    residual_variance = metrics.get("reduced_chi2")
+    variance_factor = (1.0 if weights is not None else residual_variance)
     parameter_errors = {}
-    if isinstance(sigma2, (int, float)) and math.isfinite(sigma2):
-        parameter_errors["slope"] = math.sqrt(max(sigma2 / sxx, 0.0))
-        parameter_errors["intercept"] = math.sqrt(max(sigma2 * (1.0 / sw + x_bar**2 / sxx), 0.0))
-    else:
-        # Absolute (not scaled) covariance from residual scatter.
-        parameter_errors["slope"] = math.sqrt(max(float(np.sum(residuals**2)) / max(n - 2, 1) / sxx, 0.0))
+    if isinstance(variance_factor, (int, float)) and math.isfinite(variance_factor):
+        with np.errstate(all="ignore"):
+            # hypot avoids squaring large X offsets before taking the root.
+            slope_error = np.sqrt(variance_factor) / np.sqrt(sxx)
+            intercept_error = np.sqrt(variance_factor) * np.hypot(1.0 / np.sqrt(sw), x_bar / np.sqrt(sxx))
+        if not (np.isfinite(slope_error) and np.isfinite(intercept_error)):
+            return _failure(MODEL_LINEAR, "Parameter errors are nonfinite; rescale the measurements and retry.",
+                            n_observations=n, n_excluded=n_excluded)
+        parameter_errors["slope"] = float(slope_error)
+        parameter_errors["intercept"] = float(intercept_error)
 
     warnings = []
     if n == 2:
-        warnings.append("Exactly two points: the line is interpolating, not estimating.")
+        warnings.append("Exactly two points: the line interpolates; residual scatter cannot assess model fit.")
+        if weights is None:
+            warnings.append("Residual-based parameter standard errors are unavailable without residual degrees of freedom.")
     if weights is not None:
-        warnings.append("Weights are treated as inverse variance (w = 1/sigma²); verify your uncertainty column.")
+        warnings.append("Weights are treated as absolute inverse variances (w = 1/sigma²); "
+                        "parameter errors assume the supplied standard uncertainties are correct and independent.")
     return FitResult(
         model=MODEL_LINEAR,
         label=MODEL_SPECS[MODEL_LINEAR]["label"],
@@ -291,7 +327,10 @@ def fit_polynomial(x, y, degree: int = 2, weights=None, *, x_label="x", y_label=
         return _failure(MODEL_POLYNOMIAL, "Predictions overflowed for this X range; try a lower degree.",
                         n_observations=n, n_excluded=n_excluded)
     residuals = y_fit - fitted
-    metrics = _metrics(y_fit, fitted, residuals, degree + 1, w)
+    try:
+        metrics = _metrics(y_fit, fitted, residuals, degree + 1, w)
+    except _UnreliableFitMetrics as exc:
+        return _failure(MODEL_POLYNOMIAL, str(exc), n_observations=n, n_excluded=n_excluded)
     equation = f"{y_label} = " + " + ".join(
         f"({format_si(value)})*{x_label}^{i}" if i else format_si(value)
         for i, value in enumerate(coefficients)
@@ -321,7 +360,7 @@ def fit_polynomial(x, y, degree: int = 2, weights=None, *, x_label="x", y_label=
 
 def _exp_model(x, amplitude, rate, offset):
     with np.errstate(over="ignore", invalid="ignore"):
-        return amplitude * np.exp(np.clip(rate * x, -700, 700)) + offset
+        return amplitude * np.exp(rate * x) + offset
 
 
 def _log_model(x, amplitude, offset):
@@ -394,7 +433,10 @@ def fit_nonlinear(model: str, x, y, weights=None, *, x_label="x", y_label="y",
         return _failure(model, "The optimiser returned non-finite parameters or predictions.",
                         n_observations=n, n_excluded=n_excluded)
     residuals = y_fit - fitted
-    metrics = _metrics(y_fit, fitted, residuals, n_params, w)
+    try:
+        metrics = _metrics(y_fit, fitted, residuals, n_params, w)
+    except _UnreliableFitMetrics as exc:
+        return _failure(model, str(exc), n_observations=n, n_excluded=n_excluded)
     errors = {}
     if np.all(np.isfinite(covariance)):
         errors = {name: float(math.sqrt(max(covariance[i, i], 0.0)))

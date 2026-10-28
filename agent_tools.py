@@ -8,6 +8,7 @@ deterministic helpers. Numerical results therefore always come from Python.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -17,10 +18,11 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+import provider_config
 from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
 from data_io import coerce_numeric
-from fitting_core import MODEL_SPECS, fit_model
+from fitting_core import MODEL_SPECS, fit_model, inverse_variance_weights
 from fitting_core import compare_models as rank_models
 from statistics_core import correlation, covariance, describe_numeric, outlier_diagnostics
 from visualization_core import PLOT_TYPES, build_chart
@@ -276,13 +278,14 @@ def _outlier_scan(ctx: ToolContext, params: dict) -> dict:
     return {"outliers": result, "note": "Flags only; no observation was removed."}
 
 
-def _weights_for(ctx: ToolContext, column: str | None):
-    if column is None or ctx.pair_mask is None:
+def _weights_for(ctx: ToolContext, column: str | None, mask: np.ndarray):
+    if column is None:
         return None
-    values = coerce_numeric(ctx.working[column]).values[ctx.pair_mask]
-    if len(values) != len(ctx.x_values) or not np.all(np.isfinite(values)) or np.any(values <= 0):
+    values = coerce_numeric(ctx.working[column]).values[mask]
+    try:
+        return inverse_variance_weights(values)
+    except ValueError:
         return "invalid"
-    return 1.0 / values**2
 
 
 def _fit_curve(ctx: ToolContext, params: dict) -> dict:
@@ -292,11 +295,9 @@ def _fit_curve(ctx: ToolContext, params: dict) -> dict:
     xv = coerce_numeric(ctx.working[x]).values
     yv = coerce_numeric(ctx.working[y]).values
     mask = np.isfinite(xv) & np.isfinite(yv)
-    weights = _weights_for(ctx, params.get("weights"))
+    weights = _weights_for(ctx, params.get("weights"), mask)
     if isinstance(weights, str) and weights == "invalid":
-        return {"error": "selected uncertainty column has non-positive or non-finite values"}
-    if isinstance(weights, np.ndarray):
-        weights = weights[mask]
+        return {"error": "selected uncertainty column contains invalid values or inverse-variance weights outside the numerical range"}
     fit = fit_model(
         params["model"], xv[mask], yv[mask], weights,
         degree=params.get("degree") or 2, x_label=x, y_label=y,
@@ -506,22 +507,32 @@ def execute_tool(name: str, params: dict, ctx: ToolContext) -> ToolResult:
     remaining = max(ctx.deadline - time.monotonic(), 0.1)
     timeout = min(MAX_TOOL_S, remaining)
     try:
-        future = _EXECUTOR.submit(spec.fn, ctx, normalized)
-        payload = future.result(timeout=timeout)
+        # A Python thread cannot be forcibly stopped on timeout. Isolate its
+        # mutable state so late completion cannot alter a later audited result.
+        def run_isolated():
+            worker_ctx = copy.deepcopy(ctx)
+            return spec.fn(worker_ctx, normalized), worker_ctx
+
+        future = _EXECUTOR.submit(run_isolated)
+        payload, worker_ctx = future.result(timeout=timeout)
     except FutureTimeout:
+        future.cancel()  # A running thread may still finish on its isolated copy.
+        ctx.deadline = min(ctx.deadline, time.monotonic())
         return ToolResult(False, name, normalized,
                           (time.monotonic() - started) * 1000,
-                          error=f"tool exceeded its {timeout:.1f}s budget")
+                          error=f"tool exceeded its {timeout:.1f}s budget; further tools stopped")
     except Exception as exc:
         return ToolResult(False, name, normalized,
                           (time.monotonic() - started) * 1000,
-                          error=f"{type(exc).__name__}: {exc}")
+                          error=provider_config.redact(f"{type(exc).__name__}: {exc}"))
     duration = (time.monotonic() - started) * 1000
     if not isinstance(payload, dict):
         return ToolResult(False, name, normalized, duration, error="tool returned a non-object result")
     if payload.get("error"):
         return ToolResult(False, name, normalized, duration,
                           result={"error": payload["error"]}, error=payload["error"])
+    # Commit tool state only for a completed, successful call.
+    ctx.__dict__.update(worker_ctx.__dict__)
     # Keep the audit log small and JSON-safe.
     try:
         encoded = json.dumps(payload, allow_nan=False, default=str)

@@ -138,6 +138,12 @@ def confidence_interval_mean(values, confidence: float = 0.95) -> dict:
             "assumptions": "Independent, approximately normal observations.",
         }
     if sem == 0:
+        if not np.all(clean == clean[0]):
+            return {
+                "interval": None,
+                "method": "Not computed: standard error underflowed for non-identical values; rescale the data.",
+                "assumptions": "Independent, approximately normal observations.",
+            }
         return {
             "interval": [float(clean[0]), float(clean[0])],
             "method": "t interval degenerate: all finite values are identical.",
