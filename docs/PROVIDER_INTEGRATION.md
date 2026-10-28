@@ -12,7 +12,7 @@ demo, a submission, or a report.
 | `BASETEN_MODEL` | optional environment override | `meta-models/muse-spark-open` |
 | Endpoint | fixed in `ask_muse.BASE_URL` | `https://inference.baseten.co/v1` |
 | Timeout / retries | fixed | 90 s; SDK retries disabled; adapter allows at most 2 bounded transient retries |
-| Completion budget | `MAX_COMPLETION_TOKENS` | 4096 tokens |
+| Report completion budget | `LABLENS_REPORT_MAX_TOKENS`, optional bounded override | 4096 tokens (1024–16384) |
 
 The default model string is the one published in Meta's hosted-provider
 table and in Baseten's model library. Some hackathon accounts are assigned a
@@ -264,3 +264,22 @@ configuration-only sidebar check remains unverified even after another action;
 the report/check output shows its own outcome. Before a live interpretation,
 review filenames, column names, question and computed summaries for sensitive
 information; the context excludes raw rows but is not a privacy guarantee.
+
+## Incomplete live responses — local hardening
+
+`finish_reason=length` is classified as truncation even when visible content
+is empty. Reasoning-only output without that finish reason is incomplete, not
+a report; private reasoning is never displayed or exported. A refusal is
+reported separately. Neither condition triggers an automatic retry. The error
+identifies the configured report token limit and suggests fewer sections or an
+explicit `LABLENS_REPORT_MAX_TOKENS` adjustment; a larger limit can consume
+more credits and may not work on every deployment. It is not evidence that
+token exhaustion caused a particular failure. Agent plan requests use their
+own budget without mutating the shared report setting. Numeric `Retry-After`
+values up to five seconds are honored for transient retries; longer or
+unparseable delays stop automatic retry and ask the user to wait.
+
+The reported Baseten failure has not been reproduced against the real provider
+in this environment. String final content and the response error paths were
+tested with mocked SDK-shaped responses. Other content representations are
+not claimed as supported; no reasoning field is used as an answer.

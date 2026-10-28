@@ -47,4 +47,5 @@ def isolate_provider_environment(request, monkeypatch):
         return
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_MODEL", raising=False)
+    monkeypatch.delenv("LABLENS_REPORT_MAX_TOKENS", raising=False)
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")

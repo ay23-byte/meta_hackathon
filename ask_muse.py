@@ -489,7 +489,7 @@ def _http_status(exc):
     return status
 
 
-def _completion_request(client, prompt, *, json_mode, modern_tokens):
+def _completion_request(client, prompt, *, json_mode, modern_tokens, max_tokens=None):
     """Issue one bounded chat-completion request.
 
     Meta's Model API prefers a ``developer`` instruction message over
@@ -513,10 +513,11 @@ def _completion_request(client, prompt, *, json_mode, modern_tokens):
         ],
         "stream": False,
     }
+    token_budget = MAX_COMPLETION_TOKENS if max_tokens is None else max_tokens
     if modern_tokens:
-        kwargs["max_completion_tokens"] = MAX_COMPLETION_TOKENS
+        kwargs["max_completion_tokens"] = token_budget
     else:
-        kwargs["max_tokens"] = MAX_COMPLETION_TOKENS
+        kwargs["max_tokens"] = token_budget
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     return client.chat.completions.create(**kwargs)
@@ -535,7 +536,7 @@ def _network_error(exc):
     )
 
 
-def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True):
+def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True, max_tokens=None):
     """One request shape, a documented 400 fallback, and bounded retries.
 
     Only transient HTTP statuses (and transport errors with no status) are
@@ -549,7 +550,7 @@ def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True):
         for attempt in range(MAX_TRANSIENT_RETRIES + 1):
             try:
                 return _completion_request(
-                    client, prompt, json_mode=json_mode, modern_tokens=modern_tokens
+                    client, prompt, json_mode=json_mode, modern_tokens=modern_tokens, max_tokens=max_tokens
                 )
             except Exception as exc:
                 status = _http_status(exc)
@@ -557,7 +558,24 @@ def _request_with_bounded_retries(client, prompt, *, allow_shape_fallback=True):
                     break  # Conservative shape for OpenAI-compatible gateways.
                 transient = status is None or status in TRANSIENT_HTTP_STATUSES
                 if transient and attempt < MAX_TRANSIENT_RETRIES:
-                    time.sleep(TRANSIENT_BACKOFF_SECONDS * (2 ** attempt))
+                    delay = TRANSIENT_BACKOFF_SECONDS * (2 ** attempt)
+                    # Honor numeric Retry-After only within our bounded wait.
+                    # A longer provider-requested delay is surfaced instead of
+                    # retrying sooner or blocking a Streamlit session indefinitely.
+                    headers = getattr(getattr(exc, "response", None), "headers", None)
+                    retry_after = headers.get("retry-after") if headers is not None else None
+                    if retry_after is not None:
+                        try:
+                            requested = float(retry_after)
+                        except (TypeError, ValueError):
+                            requested = None  # HTTP-date is not parsed; stop rather than retry early.
+                        if requested is None or not math.isfinite(requested) or requested < 0 or requested > 5:
+                            raise RuntimeError(
+                                "Provider requested a retry delay outside the automatic wait limit. "
+                                "Wait before retrying manually."
+                            ) from None
+                        delay = max(delay, requested)
+                    time.sleep(delay)
                     continue
                 if status is not None:
                     raise RuntimeError(describe_provider_error(exc)) from None
@@ -832,7 +850,8 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     # role, or max_completion_tokens with HTTP 400; that request is retried
     # once in the conservative shape. Transient 408/429/5xx and network
     # failures get a small, bounded number of retries. No retry is unbounded.
-    response = _request_with_bounded_retries(client, prompt)
+    budget = provider_config.get_report_token_budget()
+    response = _request_with_bounded_retries(client, prompt, max_tokens=budget)
 
     choices = getattr(response, "choices", None)
     if not choices:
@@ -843,29 +862,31 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     if message is None:
         raise RuntimeError("Muse Spark returned a response without a message.")
 
+    finish_reason = getattr(choice, "finish_reason", None)
+    if getattr(message, "refusal", None):
+        raise RuntimeError("Muse Spark declined the request; no report was generated. Review the request and provider policy.")
+    # Inspect termination before content: a reasoning-only response may exhaust
+    # its budget and have both finish_reason=length and an empty final answer.
+    if finish_reason == "length":
+        raise RuntimeError(
+            f"Muse Spark's report was truncated (completion limit {budget} tokens); no report was stored. "
+            "A higher LABLENS_REPORT_MAX_TOKENS setting or fewer sections may help, "
+            "but another request may consume credits and success is not guaranteed."
+        )
+    if finish_reason in ("content_filter", "tool_calls", "function_call"):
+        raise RuntimeError("Muse Spark did not return a final report (filtered or non-report response).")
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
-        # Reasoning models can spend the whole token budget on thinking and
-        # leave the visible answer empty. Report that clearly; never use
-        # reasoning_content as a substitute for the structured report.
         extras = getattr(message, "model_extra", None) or {}
-        if extras.get("reasoning_content"):
+        if getattr(message, "reasoning_content", None) or (isinstance(extras, dict) and extras.get("reasoning_content")):
             raise RuntimeError(
-                "Muse Spark returned reasoning but no visible report content. "
-                "Increase the completion-token budget and try again."
+                f"Muse Spark returned reasoning but no visible report content (completion limit {budget} tokens). "
+                "No report was stored. Fewer sections or a higher LABLENS_REPORT_MAX_TOKENS may help; "
+                "another request may consume credits and success is not guaranteed."
             )
-        raise RuntimeError("Muse Spark returned empty content.")
-
+        raise RuntimeError("Muse Spark returned empty content; no final report was produced.")
     if len(content) > MAX_RAW_REPORT_CHARS:
-        raise RuntimeError(
-            "Muse Spark returned an oversized response; it was rejected."
-        )
-
-    if getattr(choice, "finish_reason", None) == "length":
-        raise RuntimeError(
-            "Muse Spark's report was truncated before a complete JSON object. "
-            "Increase the completion-token budget and try again."
-        )
+        raise RuntimeError("Muse Spark returned an oversized response; it was rejected.")
 
     structured = validate_report(
         content, titles, profile=profile, allowed_evidence_ids=allowed_ids

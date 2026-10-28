@@ -170,3 +170,19 @@ def test_deterministic_conclusion_for_insufficient_state_is_honest():
     text = planner.deterministic_conclusion(digest)
     assert "Insufficient evidence" in text
     assert "constant response" in text
+
+
+def test_plan_budget_is_local_to_request(monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-placeholder")
+    response = types.SimpleNamespace(choices=[types.SimpleNamespace(
+        message=types.SimpleNamespace(content=json.dumps(custom_plan())))])
+    seen = []
+    monkeypatch.setattr(ask_muse, "OpenAI", lambda **kwargs: object())
+
+    def capture(client, prompt, **kwargs):
+        seen.append((kwargs["max_tokens"], ask_muse.MAX_COMPLETION_TOKENS))
+        return response
+
+    monkeypatch.setattr(ask_muse, "_completion_request", capture)
+    planner.request_agent_plan(quality(), registry_manifest())
+    assert seen == [(planner.MAX_PLAN_TOKENS, ask_muse.MAX_COMPLETION_TOKENS)]
