@@ -16,7 +16,7 @@ import time
 from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
+
 
 # Official Baseten Model API identifier documented by Meta and Baseten.
 # Selected hackathon accounts may be told to use a dated variant; allow an
