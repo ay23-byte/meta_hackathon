@@ -201,6 +201,13 @@ python analyze_dataset.py data/sample_voltage_current.csv \
 Synthetic example datasets are documented in `data/examples/README.md`. They
 are computer-generated, **not** experimental evidence.
 
+## Conditional theory chapter
+
+The optional research panel includes an offline Ohmic teaching chapter after
+explicit user confirmation, with a unit-aware fit interpretation and an
+illustrative (not measured) example. See [theory scope and limitations](docs/SCIENTIFIC_THEORY_ENGINE.md)
+and [upgrade progress](docs/IMPLEMENTATION_PROGRESS.md).
+
 ## Offline research notes
 
 The optional research context provides explicitly user-confirmed Ohmic theory

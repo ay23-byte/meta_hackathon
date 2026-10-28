@@ -17,8 +17,10 @@ outliers are flags, and that independence, instrument calibration, systematic
 error and accuracy are not established by the data. They do not invent
 uncertainties or calculate new confidence intervals, bootstrap estimates,
 power or influence statistics. Existing statistics, fit and parameters remain
-authoritative. Numbers are not copied into the new notes; the existing fit
-section of the report displays them directly from the result record.
+authoritative. The existing fit section of the report displays authoritative fit values directly
+from the result record. The optional conditional theory chapter also derives a
+unit-converted resistance from that fit and records its conversion factor; it
+does not replace or independently validate the fit.
 
 The existing comparison panel allows selection among already-computed models,
 shows their in-range curves and residuals (display capped at 2,000 residuals
@@ -59,3 +61,7 @@ learning**, enable notes and optionally confirm the physical assumptions. Read
 **Theory and reliability** and **Compare candidate models**; export as before.
 The confirmed ohmic explanation must only be selected when the user knows that
 X represents current and Y voltage. No provider key is needed for these notes.
+
+See [the conditional theory chapter](SCIENTIFIC_THEORY_ENGINE.md),
+[scientific data schema](SCIENTIFIC_DATA_SCHEMA.md) and
+[implementation progress](IMPLEMENTATION_PROGRESS.md).

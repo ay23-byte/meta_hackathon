@@ -5,7 +5,7 @@ Numerical values are referenced from the authoritative result at render time.
 """
 from __future__ import annotations
 
-LEVELS = ("beginner", "intermediate", "advanced")
+LEVELS = ("beginner", "intermediate", "advanced", "undergraduate", "postgraduate", "research")
 
 
 def experiment_context(*, title="", discipline="", description="", apparatus="",
@@ -13,7 +13,7 @@ def experiment_context(*, title="", discipline="", description="", apparatus="",
                        confirmed_ohmic=False):
     """Capture bounded user-supplied metadata, never infer an experiment."""
     if level not in LEVELS:
-        raise ValueError("Explanation level must be beginner, intermediate or advanced.")
+        raise ValueError("Explanation level is not supported.")
     return {
         "title": str(title).strip()[:300], "discipline": str(discipline).strip()[:100],
         "description": str(description).strip()[:1000], "apparatus": str(apparatus).strip()[:500],
