@@ -200,3 +200,12 @@ Reported RMSE and MAE are unweighted, whereas R² and chi-square use the supplie
 weights; the reported reduced chi-square has its standard measurement-error
 interpretation only when weights really are known inverse variances. The demo
 and tests cannot establish these assumptions for arbitrary data.
+
+## Submission-focused evidence ID update (29 October 2026)
+
+The example bare IDs in the historical section above describe the legacy
+`evidence_index()` API. The AI-facing `ai_context()` now requests
+analysis-bound IDs with a deterministic fingerprint of the dataset, mappings
+and computed results. Changing the source checksum, units or fit invalidates
+old IDs. The links establish only registry membership, not semantic support
+or scientific validity. See `tests/test_bound_ai_evidence.py`.

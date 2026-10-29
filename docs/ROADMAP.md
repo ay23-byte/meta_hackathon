@@ -15,7 +15,7 @@ and pip check pass. A green suite is not a scientific or security certificate.
 | Theory validation | Partially implemented | `theory_engine.py`, `tests/test_theory_engine.py`; user-confirmed Ohmic chapter and explicitly supplied resistance prediction comparison; no broad theory registry or general validation. |
 | AI validation and provider | Partially implemented | `ask_muse.py` and provider tests validate schemas and evidence ID allowlists; narrow numeric contradiction and evidence-ID checks; semantic claim support, units and citations are not independently verified. |
 | JSON/CSV/Markdown/ZIP and software versions | Implemented and verified offline | `result_schema.py`, `tests/test_result_schema.py`, `tests/test_export_safety.py`; unsigned manifest includes artifact hashes and selected provenance, not a complete environment lock. |
-| PDF export | Partially implemented | Opt-in text-first PDF, tested by parsing; figures are separate, layout and broad Unicode/accessibility not comprehensively verified. |
+| PDF export | Partially implemented | Opt-in PDF with embedded locally generated PNG plot pages, tested by parsing; plots remain separate, layout and broad Unicode/accessibility not comprehensively verified. |
 | Literature retrieval and verification | Blocked | External retrieval host access/usable source not available in this sandbox; no references were retrieved or verified. |
 | Live Muse Spark | Blocked | Two live tests skipped by default; no authorized successful live request in this session. |
 | End-to-end demo and browser | Implemented but incompletely verified | Linux headless Chromium covered synthetic demo, mock report and ZIP manifest in the prior increment; current increment includes targeted Streamlit UI tests and HTTP smoke. Demo does not yet cover all requested features. |
@@ -63,7 +63,7 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
 - **Still incomplete:** arbitrary covariance and general uncertainty-aware significance;
   broader multi-experiment management and inference; general theory prediction
   validation; unit-aware and semantic AI checking; verified literature;
-  figure-embedded/accessibility-reviewed PDF; integrated end-to-end demo. No externally retrieved source
+  accessibility-reviewed PDF; integrated end-to-end demo. No externally retrieved source
   or genuine live model response is asserted. Do not label these complete.
 
 ## Verification for this increment (29 October 2026)
@@ -103,3 +103,72 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
   check passed. Streamlit startup and root/health HTTP 200 on Linux. No current
   Windows run, real provider call, external literature or full interactive
   end-to-end test of all new paths. This increment is included in PR #19.
+
+## Submission-focused audit (29 October 2026; branch arena/b36d3f90-meta_hackathon)
+
+Initial checkout was clean at merge commit `5d9ae19`; baseline on Linux,
+CPython 3.11: **602 passed, 2 skipped**, Ruff, `pip check`, and compilation
+passed. Previous PR #19 CI passed Python 3.11/3.12 on Ubuntu and Windows;
+that is not a local Windows execution of the current changes.
+
+| Area | Current classification | Evidence and boundary |
+| --- | --- | --- |
+| Offline import, analysis, fitting, diagnostics and exports | Implemented and verified offline | Baseline suite, targeted UI and export tests; CSV/TSV only. |
+| AI evidence references | Partially implemented | Compact provider IDs now include a fingerprint of current data, roles and results; stale/different dataset IDs are rejected. Links do not establish semantic support or unit correctness. |
+| AI guard | Partially implemented | Explicit slope/intercept/R²/RMSE/n checks and evidence allowlist; other numerical patterns, units, citation support and semantic entailment remain unverified. |
+| Muse Spark provider | Blocked by credentials/network | Configuration and mocked response/failure tests; no successful real request in this environment. Connectivity and structured live tests are opt-in and billable. |
+| Uncertainty | Partially implemented | Parameter/prediction intervals, two-input propagation and seeded simulation; assumptions and limited scope in `MATHEMATICS_AND_UNCERTAINTY.md`. |
+| Experiment comparison | Partially implemented | Explicit two-dataset mapping, optional independent Welch interval, optional separate unweighted linear fits and slope differences/ratios; not paired inference or a multi-experiment manager. |
+| Ohmic theory validation | Partially implemented | User-confirmed units/mapping and proposed resistance, descriptive residuals only; no general theory registry or scientific proof. |
+| PDF and manifests | Implemented but incompletely verified | PDF parsed in tests; generated PNG plots are embedded and separately packaged; accessibility and broad Unicode not fully checked. Manifest is unsigned. |
+| Literature retrieval | Blocked by external access | No actual retrieval or claim-to-source support checking. |
+| Demo and Windows | Implemented but incompletely verified | Offline AppTest exercises the combined synthetic comparison/theory/mock/PDF path; no new local Windows run or full live provider demonstration. |
+| Security | Implemented but incompletely verified | Limited tracked-file pattern scan, path/input review and PyPI vulnerability audit; not a full historical secret scan or independent security audit. |
+
+The provider's current public model page lists endpoint
+`https://inference.baseten.co/v1` and model `meta-models/muse-spark-open`:
+<https://www.baseten.co/library/muse-spark-open/> (checked 29 October 2026).
+Actual account entitlement and network reachability remain unverified; overrides
+must come from the provider's account instructions. User-supplied context and
+metadata may be transmitted on explicit live requests; do not include private
+information. Never paste a key into a chat or a demo.
+
+### Verification of submission-focused increment
+
+- Targeted AI/evidence/provider suites: **64 passed**; connectivity/evidence
+  targeted suite **51 passed**; comparison/evidence/schema suite **30 passed**;
+  integrated synthetic Streamlit AppTest **1 passed**. One newly written
+  analytical test initially used incorrect expected slopes; independent NumPy
+  least squares was used to correct its expected values, after which it passed.
+  An initial integrated UI assertion incorrectly expected late report content
+  within the deliberately bounded preview; corrected to inspect UI elements,
+  retaining separate full-export tests.
+- Final Linux full suite: **609 passed, 2 skipped** (live opt-in); Ruff,
+  byte-compilation, `pip check`, `git diff --check` passed. Streamlit root and
+  health returned HTTP 200. All seven strict offline agent demo cases reached
+  their documented expected states.
+- Synthetic CLI mock run: 15 input rows, 12 fitted, slope 2.5; opened a
+  seven-page PDF, verified all manifest hashes and five separately packaged
+  PNGs. The mock is not a model response.
+- Limited pattern scan of 138 tracked working-tree paths found no matching
+  secret patterns; this does not cover history or prove absence of secrets.
+  `pip-audit` using PyPI initially reported 21 findings in old venv bootstrap
+  pip/setuptools; after upgrading those local tools, a repeat audit reported
+  no known vulnerabilities in that environment. This is not a general security
+  certification or a historical secret scan.
+- Live connectivity **not attempted**: missing usable `BASETEN_API_KEY` and
+  provider host is outside sandbox egress. The manual probe exited with a
+  missing-configuration message without a network request. No live structured
+  report or literature retrieval. No new local Windows execution or video.
+
+### PDF figure-embedding update
+
+Generated `plots/*.png` artifacts are embedded on individually captioned PDF
+pages and remain separate files. HTML and agent artifacts are not embedded.
+PDF generation refuses invalid/oversized images, more than 12 figures, or more
+than 80 total pages rather than silently omitting figures; the UI retains other
+exports if PDF generation fails. Targeted PDF/export/demo suites **30 passed**;
+full Linux suite **611 passed, 2 skipped**, Ruff, pip check, compilation and
+diff check passed. A fresh synthetic CLI export yielded 12 PDF pages, including
+five figure pages each containing an image object; all manifest hashes matched.
+Accessibility, broad Unicode and visual layout have not been fully audited.

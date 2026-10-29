@@ -29,7 +29,11 @@ from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
 from domain_modules import apply_domain, list_domain_modules
-from experiment_comparison import compare_experiments, independent_mean_difference_interval
+from experiment_comparison import (
+    compare_experiments,
+    compare_linear_fits,
+    independent_mean_difference_interval,
+)
 from fitting_core import (
     MODEL_SPECS,
     compare_models,
@@ -1350,6 +1354,16 @@ with st.expander("Compare a second experiment (offline)"):
                             f"{summary['mean_y_difference_second_minus_first']:.6g} {unit_y}")
                     st.caption(summary["limitations"])
                     st.caption(summary["plot_note"])
+                    if st.checkbox("Fit separate unweighted lines to both experiments", value=False,
+                                   key=f"comparison_linear_{confirm_hash}",
+                                   help="Explicitly select straight-line models for both datasets; main-analysis weighting is not reused."):
+                        fit_comparison = compare_linear_fits(
+                            {"frame": working, "x": x_col, "y": y_col, "unit_x": unit_x, "unit_y": unit_y},
+                            {"frame": comparison_frame, "x": cx, "y": cy, "unit_x": ux, "unit_y": uy},
+                            confirmed=True)
+                        result["comparison"]["linear_fits"] = fit_comparison
+                        st.json(fit_comparison)
+                        st.caption(fit_comparison["limitations"])
                     inference = st.checkbox("Assume independent observations and request a conditional Welch mean-difference interval",
                                             value=False, key=f"comparison_inference_{confirm_hash}",
                                             help="Not suitable for paired/repeated observations; this does not adjust for different X distributions.")
@@ -1467,7 +1481,7 @@ else:
 
 step_header("G", "Export", "Every artifact is derived from the single result schema for the current configuration.")
 include_pdf = st.checkbox("Include text-first PDF report in ZIP", value=False,
-                          help="Figures remain separate PNG/HTML files in the ZIP. Large reports may be unavailable as PDF.")
+                          help="Generated plot PNGs are embedded as figure pages and remain separate in the ZIP. Large reports may be unavailable as PDF.")
 
 try:
     from evidence_trace import build_evidence_ledger

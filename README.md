@@ -409,8 +409,14 @@ explicit assumptions; the outputs do not establish causation or validate a physi
 model. Monte Carlo quantiles are not confidence intervals, and the Welch interval
 does not account for paired measurements or different X distributions.
 
-Select **Include text-first PDF report in ZIP** to add an optional PDF; figures
-remain separate artifacts. The general CLI also accepts `--pdf`. Oversized PDFs
+Select **Include text-first PDF report in ZIP** to add an optional PDF; generated PNG plots are embedded
+as figure pages and also remain separate artifacts. The general CLI also accepts `--pdf`. Oversized PDFs
 are refused rather than silently truncated. PDF layout, accessibility and broad
 Unicode coverage have not been comprehensively verified. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for feature status and limitations.
+
+For a longer offline submission rehearsal, see the extended synthetic Ohmic
+walkthrough in [`docs/LIVE_DEMO_GUIDE.md`](docs/LIVE_DEMO_GUIDE.md). The two
+constructed datasets are not real measurements or independent replications.
+The optional comparison fits separate unweighted straight lines and reports
+descriptive differences; it does not establish statistical significance.

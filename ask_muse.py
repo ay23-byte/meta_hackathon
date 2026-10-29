@@ -603,7 +603,10 @@ def check_provider_connectivity() -> None:
             raise RuntimeError(describe_provider_error(exc)) from None
         raise _network_error(exc) from None
     choices = getattr(response, "choices", None)
-    message = getattr(choices[0], "message", None) if choices else None
+    choice = choices[0] if choices else None
+    message = getattr(choice, "message", None)
+    if getattr(choice, "finish_reason", None) in ("length", "content_filter", "tool_calls", "function_call") or getattr(message, "refusal", None):
+        raise RuntimeError("Connectivity check did not return a complete usable final response.")
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Connectivity check received no visible response; report generation is not verified.")

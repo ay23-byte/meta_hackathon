@@ -59,3 +59,24 @@ def test_pdf_ui_opt_in_and_pdf_error_keeps_other_downloads(monkeypatch):
     assert not app.exception and not app.error
     assert any("PDF unavailable; other exports are preserved" in w.value for w in app.warning)
     assert len(app.get("download_button")) == 3
+
+
+def test_pdf_embeds_generated_png_and_preserves_separate_artifact(tmp_path):
+    analyze_csv(ROOT / "data/sample_voltage_current.csv", tmp_path,
+                x="current_A", y="voltage_V", include_pdf=True)
+    reader = PdfReader(str(tmp_path / "report.pdf"))
+    figure_pages = [page for page in reader.pages if "Generated figure" in (page.extract_text() or "")]
+    assert figure_pages
+    assert any(page.images for page in figure_pages)
+    assert any("plots/scatter.png" in page.extract_text() for page in figure_pages)
+    assert (tmp_path / "plots/scatter.png").is_file()
+
+
+def test_pdf_refuses_invalid_or_oversized_figure_instead_of_silently_omitting():
+    with pytest.raises(ValueError, match="figure"):
+        render_report_pdf("report", figures={"plots/bad.png": b"not a png"})
+    with pytest.raises(ValueError, match="figure limit"):
+        render_report_pdf("report", figures={f"plots/{i}.png": b"x" for i in range(13)})
+    # The ordinary non-PDF bundle remains available separately.
+    files = export_bundle({}, charts={"plots/bad.png": b"not a png"})
+    assert files["plots/bad.png"] == b"not a png" and "report.md" in files

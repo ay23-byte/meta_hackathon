@@ -36,7 +36,7 @@ def build_evidence_ledger(result: dict) -> dict:
     insights = (result.get("insights") or {}).get("items") or []
     paths = {path for card in insights for path in (card.get("evidence_paths") or [])}
     paths.update(("source.sha256", "roles.x", "roles.y", "fit.model", "fit.success"))
-    for path in ("comparison.mean_y_difference_second_minus_first", "comparison.datasets", "comparison.difference_interval",
+    for path in ("comparison.mean_y_difference_second_minus_first", "comparison.datasets", "comparison.difference_interval", "comparison.linear_fits",
                  "uncertainty.parameters", "predictions.intervals", "research.chapter.derived",
                  "correlated_propagation", "monte_carlo_propagation", "theory_validation"):
         if _resolve(result, path)[0]:

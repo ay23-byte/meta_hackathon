@@ -1,42 +1,25 @@
+"""Manual opt-in connectivity probe, using the single application adapter.
 
-from openai import OpenAI
+Running this file makes one potentially billable provider request. Importing it
+has no side effects. It never prints response content or credential values.
+"""
+
+import sys
 
 import ask_muse
-import provider_config
 
 
-def main():
-    api_key = provider_config.get_api_key()
-
-    if not api_key or api_key == "your_baseten_api_key_here":
-        raise RuntimeError(
-            "Set your actual Baseten API key in .env first."
-        )
-
-    client = OpenAI(
-        base_url="https://inference.baseten.co/v1",
-        api_key=api_key,
-        timeout=60.0,
-    )
-
+def main() -> int:
     try:
-        response = client.chat.completions.create(
-            model="meta-models/muse-spark-open",
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Reply with exactly: Muse Spark connection successful",
-                }
-            ],
-            max_tokens=256,
-        )
-        print(response.choices[0].message.content)
-
-    except Exception as exc:
-        # Print the status and safe error text, never the API key.
-        print("Error type:", type(exc).__name__)
-        print("Provider error:", ask_muse.describe_provider_error(exc) if ask_muse._http_status(exc) is not None else str(ask_muse._network_error(exc)))
+        ask_muse.check_provider_connectivity()
+    except RuntimeError as exc:
+        # The adapter produces fixed, secret-free error categories, never raw
+        # provider messages. Do not print or persist model/provider metadata.
+        print(f"Connectivity check failed: {exc}", file=sys.stderr)
+        return 1
+    print("Live connectivity succeeded; structured interpretation is not yet verified.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
