@@ -283,3 +283,13 @@ The reported Baseten failure has not been reproduced against the real provider
 in this environment. String final content and the response error paths were
 tested with mocked SDK-shaped responses. Other content representations are
 not claimed as supported; no reasoning field is used as an answer.
+
+## Limited numerical guard (29 October 2026)
+
+The general UI/CLI and provider adapter now also reject explicit slope,
+intercept, R², RMSE and n statements that contradict current fit values, and
+preserve the compact evidence index actually used in the request. This is a
+narrow pattern-based check with rounding tolerance, not general numerical,
+unit, citation, semantic or scientific validation. A schema-valid response
+without a detected contradiction still needs human review. No live provider
+request was made to verify this change; tests use mock clients.

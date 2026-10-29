@@ -54,6 +54,23 @@ walkthrough and the honest offline AI fallback. JSON and Markdown reports
 record a small allowlist of runtime versions; this is useful provenance, not a
 complete environment lock or a guarantee of reproducibility.
 
+### Evidence and reproducibility (offline)
+
+The general dashboard includes an inspectable deterministic evidence ledger
+for its insight cards. IDs are bound to the current core analysis and point to
+local result paths; they do not validate interpretation or prove causality.
+The JSON and Markdown reports contain the ledger, and the ZIP/CLI bundle includes
+`manifest.json` with source and artifact checksums and selected settings. The
+manifest is not signed and does not capture a complete environment. Review
+exports for sensitive names and units before sharing.
+
+Optional AI responses undergo strict schema/evidence-ID checks and a limited
+numerical check for explicit slope, intercept, R², RMSE and n statements.
+Contradictory statements are rejected; unchecked numbers, units, citations,
+semantic support and interpretations remain unverified. Offline mock output is
+clearly labelled and is not a live provider response. Full details and gaps:
+[roadmap](docs/ROADMAP.md).
+
 ## General platform features (steps A-G)
 
 - **A - Upload.** Bytes/path/file-like inputs; BOM, UTF-8 and cp1252/latin-1
@@ -382,3 +399,18 @@ judging weights Impact 30%, Use of Meta AI Tooling 25%, Technical Depth &
 Execution 20%, Demo 25%. The rules text we read did not state demo-video length
 or repository-visibility requirements; confirm in the participant portal. See
 `docs/HACKATHON_RULES.md`.
+
+### Additional opt-in analysis and PDF export
+
+The general app offers a two-input correlated uncertainty calculator and seeded
+bivariate-normal Monte Carlo quantiles, conditional Welch intervals for independent
+experiment means, and a user-supplied Ohmic resistance comparison. Each requires
+explicit assumptions; the outputs do not establish causation or validate a physical
+model. Monte Carlo quantiles are not confidence intervals, and the Welch interval
+does not account for paired measurements or different X distributions.
+
+Select **Include text-first PDF report in ZIP** to add an optional PDF; figures
+remain separate artifacts. The general CLI also accepts `--pdf`. Oversized PDFs
+are refused rather than silently truncated. PDF layout, accessibility and broad
+Unicode coverage have not been comprehensively verified. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for feature status and limitations.

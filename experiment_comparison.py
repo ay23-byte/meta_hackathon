@@ -71,3 +71,43 @@ def compare_experiments(first: dict, second: dict, *, confirmed: bool) -> tuple[
              "limitations": "Compatibility, methods and conditions are user assertions. First-dataset cleaning choices may differ from the second dataset, where duplicates are retained. Means may reflect differing X ranges, sampling, or conditions; differences do not establish causation or statistical significance. No uncertainty or independent replication is inferred.",
              "plot_note": f"First {MAX_COMPARISON_POINTS} complete pairs per experiment at most; no interpolation or extrapolation."},
             pd.concat(plot_parts, ignore_index=True))
+
+
+def independent_mean_difference_interval(first: dict, second: dict, *, confirmed: bool) -> dict:
+    """Two-sided Welch interval for mean Y difference, under explicit assumptions.
+
+    This does not adjust for X, confounding, repeated measures or pairing.
+    """
+    from scipy.stats import t
+
+    # Reuse compatibility validation and pair exclusion before any inference.
+    summary, _ = compare_experiments(first, second, confirmed=confirmed)
+    if not confirmed:
+        raise ValueError("Confirm the assumptions before computing this interval.")
+    _, a = prepare_pairs(first["frame"], first["x"], first["y"])
+    _, b = prepare_pairs(second["frame"], second["x"], second["y"])
+    with np.errstate(all="ignore"):
+        sa, sb = float(np.var(a, ddof=1)), float(np.var(b, ddof=1))
+        va, vb = sa / len(a), sb / len(b)
+        total = va + vb
+    if (not all(math.isfinite(v) for v in (sa, sb, total)) or total <= 0 or
+            (sa == 0 and np.any(a != a[0])) or (sb == 0 and np.any(b != b[0]))):
+        raise ValueError("The mean-difference interval is unavailable because estimated variance is zero, nonfinite or underflowed.")
+    # Normalizing first avoids overflow from squaring very large variances.
+    denominator = (va / total)**2 / (len(a) - 1) + (vb / total)**2 / (len(b) - 1)
+    if not math.isfinite(denominator) or denominator <= 0:
+        raise ValueError("The Welch degrees of freedom are unavailable.")
+    dof = 1 / denominator
+    critical = float(t.ppf(.975, dof))
+    difference = summary["mean_y_difference_second_minus_first"]
+    margin = critical * math.sqrt(total)
+    lower, upper = difference - margin, difference + margin
+    if not all(math.isfinite(v) for v in (dof, critical, margin, lower, upper)):
+        raise ValueError("The mean-difference interval is nonfinite; rescale the measurements.")
+    return {"status": "conditional", "difference_second_minus_first": difference,
+            "lower": lower, "upper": upper, "unit": summary["datasets"][0]["unit_y"],
+            "degrees_of_freedom": dof, "standard_error": math.sqrt(total),
+            "method": "Two-sided 95% Welch t interval for the difference in paired-valid Y means, experiment 2 minus experiment 1.",
+            "assumptions": "Independent observations within and between experiments; approximately normal Y values or sufficient samples. Sampling and protocol comparability are user assertions.",
+            "limitations": "Not a paired or repeated-measures analysis. Does not adjust for differing X distributions, conditions, systematic errors or multiple comparisons. "
+                           "The interval does not establish causation, equivalence or practical significance."}

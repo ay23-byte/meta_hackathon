@@ -87,3 +87,53 @@ def test_ui_requires_confirmation_and_reconfirms_on_new_upload(monkeypatch):
     checkbox = next(w for w in at.checkbox if w.label.startswith("I confirm the mapped quantities"))
     assert not checkbox.value
     assert not any("Difference in paired Y means" in text.value for text in at.text)
+
+
+def test_welch_interval_matches_independent_scipy_reference():
+    from scipy.stats import t
+
+    from experiment_comparison import independent_mean_difference_interval
+
+    a = experiment([1, 2, 3, 4], [1, 2, 4, 5])
+    b = experiment([1, 2, 3, 4, 5], [3, 4, 6, 7, 9])
+    result = independent_mean_difference_interval(a, b, confirmed=True)
+    ya = np.array([1, 2, 4, 5])
+    yb = np.array([3, 4, 6, 7, 9])
+    va, vb = np.var(ya, ddof=1)/len(ya), np.var(yb, ddof=1)/len(yb)
+    df = (va + vb)**2 / (va**2/(len(ya)-1) + vb**2/(len(yb)-1))
+    mean_difference = np.mean(yb) - np.mean(ya)
+    margin = t.ppf(.975, df) * np.sqrt(va+vb)
+    assert result["difference_second_minus_first"] == pytest.approx(mean_difference)
+    assert result["lower"] == pytest.approx(mean_difference-margin)
+    assert result["upper"] == pytest.approx(mean_difference+margin)
+    assert "does not establish causation" in result["limitations"]
+
+
+def test_welch_rejects_unconfirmed_incompatible_and_zero_variance():
+    from experiment_comparison import independent_mean_difference_interval
+
+    a = experiment([1, 2], [3, 3])
+    b = experiment([1, 2], [4, 4])
+    with pytest.raises(ValueError):
+        independent_mean_difference_interval(a, b, confirmed=False)
+    with pytest.raises(ValueError, match="variance"):
+        independent_mean_difference_interval(a, b, confirmed=True)
+    with pytest.raises(ValueError, match="Units"):
+        independent_mean_difference_interval(a, experiment([1, 2], [4, 5], unit_y="mV"), confirmed=True)
+
+
+def test_welch_is_separately_opt_in_and_exported(monkeypatch):
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(w for w in app.file_uploader if w.label == "Second experiment CSV").set_value(
+        ("comparison.csv", b"current,voltage\n0,1\n1,2\n2,5\n3,6\n", "text/csv")).run()
+    next(w for w in app.text_input if w.label == "Second experiment X unit").set_value("A")
+    next(w for w in app.text_input if w.label == "Second experiment Y unit").set_value("V")
+    app.run()
+    next(w for w in app.checkbox if w.label.startswith("I confirm the mapped quantities")).check().run()
+    inference = next(w for w in app.checkbox if w.label.startswith("Assume independent observations"))
+    assert not inference.value
+    inference.check().run()
+    assert not app.exception and not app.error
+    assert any("Conditional 95% mean-difference interval" in t.value for t in app.text)
+    assert any("Welch mean-difference interval" in c.value for c in app.code)

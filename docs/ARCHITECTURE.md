@@ -195,3 +195,26 @@ reuses only `state["live"]`; the mock action reuses only `state["mock"]`.
 of truth for the `source`, `is_mock` and `provider_status` markers. The legacy
 `app.py` has a smaller `stored_live_report()` guard that rejects a stored mock
 but still reuses older wrappers without provenance fields.
+
+## Evidence and export increment (29 October 2026)
+
+`evidence_trace.py` builds a bounded ledger from existing deterministic
+insight paths and selected optional result summaries. Its fingerprint ties
+IDs to the primary dataset/configuration/results; missing paths are explicit.
+The UI, JSON and Markdown display those IDs and values. An AI report also
+stores the exact compact `evidence_index` sent to the provider, separate from
+the deterministic ledger. ID membership does not establish scientific or
+semantic support.
+
+`ai_guard.py` independently compares only explicit slope, intercept, R², RMSE
+and n patterns with computed fit values. Mismatches and unknown required IDs
+reject a report; all other numerical language, units, citations and semantic
+support remain unverified. Legacy contexts without evidence registries are
+labelled unverified rather than rejected for backward compatibility.
+
+`result_schema.export_bundle` generates `manifest.json` containing source
+checksum, configuration, partial cleaning metadata, runtime versions, provider
+mode, evidence fingerprint and SHA-256 of each other exported artifact. It is
+not signed, is not a full environment lock, and does not embed raw data beyond
+what other bundle artifacts already contain. An extra artifact cannot overwrite
+core report files. `docs/ROADMAP.md` records remaining scope and checks.

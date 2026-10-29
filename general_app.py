@@ -29,7 +29,7 @@ from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
 from data_io import DataImportError, read_csv_robust
 from domain_modules import apply_domain, list_domain_modules
-from experiment_comparison import compare_experiments
+from experiment_comparison import compare_experiments, independent_mean_difference_interval
 from fitting_core import (
     MODEL_SPECS,
     compare_models,
@@ -53,8 +53,13 @@ from statistics_core import (
     descriptive_table,
     outlier_diagnostics,
 )
-from theory_engine import ohmic_chapter
-from uncertainty_engine import linear_prediction_intervals, propagate_independent
+from theory_engine import ohmic_chapter, validate_ohmic_prediction
+from uncertainty_engine import (
+    linear_prediction_intervals,
+    monte_carlo_correlated,
+    propagate_correlated,
+    propagate_independent,
+)
 from visualization_core import PLOT_TYPES, build_chart, render_png
 
 ROOT = Path(__file__).resolve().parent
@@ -609,6 +614,7 @@ source_info = {
     "columns": all_columns, "delimiter": load.delimiter,
     "encoding": load.encoding, "warnings": list(load.warnings),
     "duplicate_headers": list(load.duplicate_headers),
+    "data_origin": "synthetic_demonstration" if uploaded is None and chosen == DEMO else "not_independently_verified",
 }
 roles = {
     "x": x_col, "y": y_col, "group": group_col, "time": time_col,
@@ -681,6 +687,14 @@ for card in result["insights"]["items"]:
         st.text(f"Next step: {card['next_step']}")
         st.caption(f"Why highlighted: {card['rank_reason']}")
 st.caption(result["insights"]["limitations"])
+with st.expander("Inspect evidence behind these insights"):
+    ledger = result["evidence_ledger"]
+    st.caption("Values come from the current local result. A link is not independent scientific verification.")
+    st.dataframe(pd.DataFrame(ledger["insight_links"]), width="stretch", hide_index=True)
+    evidence_rows = [{**item, "value": json.dumps(item["value"], ensure_ascii=False)} for item in ledger["items"]]
+    st.dataframe(pd.DataFrame(evidence_rows), width="stretch", hide_index=True)
+    if ledger["unavailable_paths"]:
+        st.text("Unavailable evidence paths: " + ", ".join(ledger["unavailable_paths"]))
 
 # ---------------------------------------------------------------------------
 # D · Explore
@@ -837,6 +851,52 @@ with st.expander("Propagate user-supplied standard uncertainties"):
                 if calculation["warning"]:
                     st.warning(calculation["warning"])
 
+with st.expander("Correlated input uncertainty and optional Monte Carlo"):
+    st.caption("Enter values, standard uncertainties and an assumed correlation. Nothing is inferred from your dataset.")
+    if st.checkbox("Enable correlated-input calculator", value=False):
+        cop = st.selectbox("Correlated calculation", ["sum", "difference", "product", "ratio"])
+        left, right = st.columns(2)
+        with left:
+            ca = st.number_input("Correlated value a", value=0.0, format="%.8g")
+            cua = st.number_input("Correlated uncertainty a", value=0.0, min_value=0.0, format="%.8g")
+            cunit_a = st.text_input("Correlated unit a (1 if dimensionless)", max_chars=24)
+        with right:
+            cb = st.number_input("Correlated value b", value=0.0, format="%.8g")
+            cub = st.number_input("Correlated uncertainty b", value=0.0, min_value=0.0, format="%.8g")
+            cunit_b = st.text_input("Correlated unit b (1 if dimensionless)", max_chars=24)
+        rho = st.number_input("Assumed correlation of input errors", min_value=-1.0, max_value=1.0,
+                              value=0.0, step=0.1)
+        mc_enabled = st.checkbox("Also simulate an assumed bivariate normal distribution", value=False)
+        mc_seed = int(st.number_input("Monte Carlo seed", min_value=0, max_value=4294967295, value=2026, step=1)) if mc_enabled else None
+        confirmation_hash = _hash({"operation": cop, "a": ca, "ua": cua, "unit_a": cunit_a,
+                                   "b": cb, "ub": cub, "unit_b": cunit_b, "rho": rho,
+                                   "mc": mc_enabled, "seed": mc_seed})
+        accepted = st.checkbox("I confirm the entered values, correlation and selected distribution assumptions",
+                               key=f"correlated_confirm_{confirmation_hash}")
+        if accepted:
+            try:
+                correlated = propagate_correlated(cop, ca, cua, cunit_a, cb, cub, cunit_b,
+                                                   correlation=rho, confirmed=True)
+                result["correlated_propagation"] = correlated
+                st.text(f"First-order result: {correlated['value']:.6g} ± {correlated['standard_uncertainty']:.6g} "
+                        f"{correlated['unit']} (standard uncertainty)")
+                st.caption(correlated["assumptions"])
+                st.caption(correlated["limitations"])
+                st.json(correlated["sensitivity"])
+                if correlated["warning"]:
+                    st.warning(correlated["warning"])
+                if mc_enabled:
+                    simulation = monte_carlo_correlated(cop, ca, cua, cunit_a, cb, cub, cunit_b,
+                                                        correlation=rho, confirmed=True, seed=mc_seed)
+                    result["monte_carlo_propagation"] = simulation
+                    st.text(f"Simulated median: {simulation['median']:.6g}; central 95% quantiles: "
+                            f"[{simulation['lower_2_5_percent']:.6g}, {simulation['upper_97_5_percent']:.6g}] "
+                            f"{simulation['unit']}")
+                    st.caption(simulation["assumptions"])
+                    st.caption(simulation["limitations"])
+            except ValueError as exc:
+                st.warning(f"Correlated calculation unavailable: {_safe_error(exc)}")
+
 with st.expander("Compare candidate models"):
     choices = [item.model for item in comparison_results if item.success]
     selected_models = st.multiselect("Candidate models to compare", choices, default=choices[:2],
@@ -960,6 +1020,27 @@ if research_context is not None:
             st.caption(chapter["reference_status"])
 
 
+with st.expander("Compare with a proposed Ohmic prediction"):
+    st.caption("Optional: supply a resistance from your own theory or reference. The value is not estimated from this dataset.")
+    if st.checkbox("Enable proposed Ohmic model comparison", value=False):
+        theory_r = st.number_input("Proposed resistance (ohm)", min_value=0.0, value=1.0, format="%.8g")
+        theory_hash = _hash({"source": load.sha256, "x": x_col, "y": y_col, "unit_x": unit_x,
+                             "unit_y": unit_y, "cleaning": cleaning_dict, "resistance": theory_r})
+        theory_confirm = st.checkbox("I confirm X is current, Y is voltage and this resistance is a user-supplied theory",
+                                     key=f"theory_confirm_{theory_hash}")
+        if theory_confirm:
+            try:
+                check = validate_ohmic_prediction(x_values, y_values, unit_x=unit_x, unit_y=unit_y,
+                                                  resistance_ohm=theory_r, confirmed=True)
+                result["theory_validation"] = check
+                st.text(f"Observed minus theoretical voltage: mean {check['mean_residual']:.6g} {unit_y}; "
+                        f"RMSE {check['rmse']:.6g} {unit_y} across {check['pairs_used']} pairs.")
+                st.caption(check["assumptions"])
+                st.caption(check["limitations"])
+            except ValueError as exc:
+                st.warning(f"Theory comparison unavailable: {_safe_error(exc)}")
+
+
 # ---------------------------------------------------------------------------
 # F · Interpret (optional AI)
 # ---------------------------------------------------------------------------
@@ -1079,6 +1160,20 @@ def store_validated_report(wrapper, titles, *, kind):
         st.error("Report rejected: incomplete report or strict schema validation "
                  "failure; nothing was stored.")
         return
+    from ai_guard import check_report_numbers
+
+    guard = check_report_numbers(structured, context)
+    if guard["status"] == "contradiction":
+        st.session_state["ai_last_error"] = "Numerical or evidence contradiction detected"
+        if kind == "live":
+            _set_active_report(None)
+        st.error("Report rejected: an explicit numerical or evidence claim conflicts with the current results. "
+                 "Deterministic analysis and exports remain available.")
+        return
+    wrapper["numeric_guard"] = guard
+    # Persist exactly the compact evidence registry actually supplied to the
+    # provider, so IDs in a downloaded claim remain resolvable.
+    wrapper["evidence_index"] = context.get("evidence_index", {})
     wrapper["structured"] = structured
     wrapper["analysis_fingerprint"] = context_hash
     wrapper["validation_status"] = "validated"
@@ -1178,6 +1273,8 @@ st.caption(f"AI status: {ai_status}. Active provenance: {active_kind or 'none'}.
 
 if current_report:
     wrapper = current_report
+    if wrapper.get("numeric_guard"):
+        st.caption(wrapper["numeric_guard"]["limitations"])
     if active_kind == "mock":
         st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
         st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
@@ -1253,6 +1350,23 @@ with st.expander("Compare a second experiment (offline)"):
                             f"{summary['mean_y_difference_second_minus_first']:.6g} {unit_y}")
                     st.caption(summary["limitations"])
                     st.caption(summary["plot_note"])
+                    inference = st.checkbox("Assume independent observations and request a conditional Welch mean-difference interval",
+                                            value=False, key=f"comparison_inference_{confirm_hash}",
+                                            help="Not suitable for paired/repeated observations; this does not adjust for different X distributions.")
+                    if inference:
+                        try:
+                            interval = independent_mean_difference_interval(
+                                {"frame": working, "x": x_col, "y": y_col, "unit_x": unit_x, "unit_y": unit_y,
+                                 "name": source_name, "sha256": load.sha256},
+                                {"frame": comparison_frame, "x": cx, "y": cy, "unit_x": ux, "unit_y": uy,
+                                 "name": comparison_upload.name, "sha256": comparison_load.sha256}, confirmed=True)
+                            result["comparison"]["difference_interval"] = interval
+                            st.text(f"Conditional 95% mean-difference interval: [{interval['lower']:.6g}, "
+                                    f"{interval['upper']:.6g}] {interval['unit']}")
+                            st.caption(interval["assumptions"])
+                            st.caption(interval["limitations"])
+                        except ValueError as exc:
+                            st.warning(f"Mean-difference interval unavailable: {_safe_error(exc)}")
                     st.altair_chart(alt.Chart(plot_data).mark_circle(size=45, opacity=0.7).encode(
                         x=alt.X("x:Q", title=f"Mapped X ({unit_x})", scale=alt.Scale(zero=False)),
                         y=alt.Y("y:Q", title=f"Mapped Y ({unit_y})", scale=alt.Scale(zero=False)),
@@ -1352,12 +1466,24 @@ else:
 # ---------------------------------------------------------------------------
 
 step_header("G", "Export", "Every artifact is derived from the single result schema for the current configuration.")
+include_pdf = st.checkbox("Include text-first PDF report in ZIP", value=False,
+                          help="Figures remain separate PNG/HTML files in the ZIP. Large reports may be unavailable as PDF.")
 
 try:
-    exports = export_bundle(
-        result, cleaned_frame=working, descriptive_table=stats_table,
-        charts={**chart_files, **agent_audit_files},
-    )
+    from evidence_trace import build_evidence_ledger
+
+    result["evidence_ledger"] = build_evidence_ledger(result)
+    try:
+        exports = export_bundle(
+            result, cleaned_frame=working, descriptive_table=stats_table,
+            charts={**chart_files, **agent_audit_files}, include_pdf=include_pdf,
+        )
+    except Exception as pdf_exc:
+        if not include_pdf:
+            raise
+        st.warning(f"PDF unavailable; other exports are preserved: {_safe_error(pdf_exc)}")
+        exports = export_bundle(result, cleaned_frame=working, descriptive_table=stats_table,
+                                charts={**chart_files, **agent_audit_files})
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload in exports.items():
