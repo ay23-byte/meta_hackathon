@@ -609,6 +609,7 @@ source_info = {
     "columns": all_columns, "delimiter": load.delimiter,
     "encoding": load.encoding, "warnings": list(load.warnings),
     "duplicate_headers": list(load.duplicate_headers),
+    "data_origin": "synthetic_demonstration" if uploaded is None and chosen == DEMO else "not_independently_verified",
 }
 roles = {
     "x": x_col, "y": y_col, "group": group_col, "time": time_col,
@@ -681,6 +682,14 @@ for card in result["insights"]["items"]:
         st.text(f"Next step: {card['next_step']}")
         st.caption(f"Why highlighted: {card['rank_reason']}")
 st.caption(result["insights"]["limitations"])
+with st.expander("Inspect evidence behind these insights"):
+    ledger = result["evidence_ledger"]
+    st.caption("Values come from the current local result. A link is not independent scientific verification.")
+    st.dataframe(pd.DataFrame(ledger["insight_links"]), width="stretch", hide_index=True)
+    evidence_rows = [{**item, "value": json.dumps(item["value"], ensure_ascii=False)} for item in ledger["items"]]
+    st.dataframe(pd.DataFrame(evidence_rows), width="stretch", hide_index=True)
+    if ledger["unavailable_paths"]:
+        st.text("Unavailable evidence paths: " + ", ".join(ledger["unavailable_paths"]))
 
 # ---------------------------------------------------------------------------
 # D · Explore
@@ -1079,6 +1088,20 @@ def store_validated_report(wrapper, titles, *, kind):
         st.error("Report rejected: incomplete report or strict schema validation "
                  "failure; nothing was stored.")
         return
+    from ai_guard import check_report_numbers
+
+    guard = check_report_numbers(structured, context)
+    if guard["status"] == "contradiction":
+        st.session_state["ai_last_error"] = "Numerical or evidence contradiction detected"
+        if kind == "live":
+            _set_active_report(None)
+        st.error("Report rejected: an explicit numerical or evidence claim conflicts with the current results. "
+                 "Deterministic analysis and exports remain available.")
+        return
+    wrapper["numeric_guard"] = guard
+    # Persist exactly the compact evidence registry actually supplied to the
+    # provider, so IDs in a downloaded claim remain resolvable.
+    wrapper["evidence_index"] = context.get("evidence_index", {})
     wrapper["structured"] = structured
     wrapper["analysis_fingerprint"] = context_hash
     wrapper["validation_status"] = "validated"
@@ -1178,6 +1201,8 @@ st.caption(f"AI status: {ai_status}. Active provenance: {active_kind or 'none'}.
 
 if current_report:
     wrapper = current_report
+    if wrapper.get("numeric_guard"):
+        st.caption(wrapper["numeric_guard"]["limitations"])
     if active_kind == "mock":
         st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
         st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
@@ -1354,6 +1379,9 @@ else:
 step_header("G", "Export", "Every artifact is derived from the single result schema for the current configuration.")
 
 try:
+    from evidence_trace import build_evidence_ledger
+
+    result["evidence_ledger"] = build_evidence_ledger(result)
     exports = export_bundle(
         result, cleaned_frame=working, descriptive_table=stats_table,
         charts={**chart_files, **agent_audit_files},

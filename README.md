@@ -54,6 +54,23 @@ walkthrough and the honest offline AI fallback. JSON and Markdown reports
 record a small allowlist of runtime versions; this is useful provenance, not a
 complete environment lock or a guarantee of reproducibility.
 
+### Evidence and reproducibility (offline)
+
+The general dashboard includes an inspectable deterministic evidence ledger
+for its insight cards. IDs are bound to the current core analysis and point to
+local result paths; they do not validate interpretation or prove causality.
+The JSON and Markdown reports contain the ledger, and the ZIP/CLI bundle includes
+`manifest.json` with source and artifact checksums and selected settings. The
+manifest is not signed and does not capture a complete environment. Review
+exports for sensitive names and units before sharing.
+
+Optional AI responses undergo strict schema/evidence-ID checks and a limited
+numerical check for explicit slope, intercept, R², RMSE and n statements.
+Contradictory statements are rejected; unchecked numbers, units, citations,
+semantic support and interpretations remain unverified. Offline mock output is
+clearly labelled and is not a live provider response. Full details and gaps:
+[roadmap](docs/ROADMAP.md).
+
 ## General platform features (steps A-G)
 
 - **A - Upload.** Bytes/path/file-like inputs; BOM, UTF-8 and cp1252/latin-1

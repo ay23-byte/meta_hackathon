@@ -897,7 +897,14 @@ def generate_interpretation(analysis_context, section_titles=None, *,
             "JSON structure. Try again or inspect the model response format."
         )
 
+    from ai_guard import check_report_numbers
+
+    guard = check_report_numbers(structured, analysis_context)
+    if guard["status"] == "contradiction":
+        raise RuntimeError("The provider report contradicted current computed results or evidence IDs; no interpretation was accepted.")
     return {
+        "numeric_guard": guard,
+        "evidence_index": analysis_context.get("evidence_index", {}),
         "model": getattr(response, "model", None) or MODEL,
         "source": LIVE_REPORT_SOURCE,
         "is_mock": False,

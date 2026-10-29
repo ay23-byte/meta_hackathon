@@ -197,6 +197,7 @@ def analyze_csv(
         "columns": columns, "delimiter": load.delimiter,
         "encoding": load.encoding, "warnings": list(load.warnings),
         "duplicate_headers": list(load.duplicate_headers),
+        "data_origin": "synthetic_demonstration" if source.resolve() == (ROOT / "data/demo/linear_calibration_demo.csv").resolve() else "not_independently_verified",
     }
     roles = {
         "x": x_col, "y": y_col, "group": group, "time": time,
@@ -251,7 +252,14 @@ def analyze_csv(
                 if structured is None:
                     result["ai_note"] = "The report was invalid locally and was rejected."
                 else:
-                    result["ai"] = {**wrapper, "structured": structured}
+                    from ai_guard import check_report_numbers
+
+                    guard = check_report_numbers(structured, context)
+                    if guard["status"] == "contradiction":
+                        result["ai_note"] = "The report contradicted the current computed values or evidence IDs and was rejected."
+                    else:
+                        result["ai"] = {**wrapper, "structured": structured, "numeric_guard": guard,
+                                        "evidence_index": context.get("evidence_index", {})}
         except (ValueError, RuntimeError) as exc:
             result["ai_note"] = f"AI interpretation unavailable: {type(exc).__name__}."
 
