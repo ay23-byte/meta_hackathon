@@ -85,7 +85,7 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
   external literature retrieval, PDF export or Windows execution was made in that earlier increment.
   The broader features listed as partial/not implemented/blocked remain so.
 
-## Subsequent uncommitted increment (29 October 2026)
+## Subsequent increment (29 October 2026)
 
 - Added opt-in two-input correlated uncertainty propagation, bounded seeded
   bivariate-normal simulation and sensitivity, with explicit distribution and
@@ -102,5 +102,4 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
   2 skipped** (opt-in live provider); Ruff, pip check, compileall and diff
   check passed. Streamlit startup and root/health HTTP 200 on Linux. No current
   Windows run, real provider call, external literature or full interactive
-  end-to-end test of all new paths. These changes have not been committed or
-  pushed to PR #19.
+  end-to-end test of all new paths. This increment is included in PR #19.
