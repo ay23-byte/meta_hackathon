@@ -162,7 +162,7 @@ def _evidence_slug(value, limit: int = 24) -> str:
     return (text.strip("_.")[:limit] or "x")
 
 
-def evidence_index(result: dict, *, limit: int = 12) -> dict:
+def evidence_index(result: dict, *, limit: int = 12, analysis_bound: bool = False) -> dict:
     """Compact ID -> computed-values map for evidence-linked AI claims.
 
     IDs are stable enough for a reproducible audit trail and contain only
@@ -226,7 +226,20 @@ def evidence_index(result: dict, *, limit: int = 12) -> dict:
         add("outliers.summary", "Outlier diagnostics", {
             key: outliers.get(key) for key in ("n_valid", "n_low", "n_high", "method")
         })
-    return dict(list(index.items())[:max(1, limit)])
+    index = dict(list(index.items())[:max(1, limit)])
+    if analysis_bound:
+        # Bind the compact AI registry to the actual current data, mappings and
+        # results, not just a reusable name such as "fit.linear". This makes an
+        # ID from another dataset or a previous fit fail allowlist validation.
+        identity = {key: result.get(key) for key in (
+            "source", "roles", "cleaning", "statistics", "correlation", "outliers",
+            "fit", "model_comparison", "domain", "uncertainty",
+        )}
+        encoded = json.dumps(json_safe(identity), sort_keys=True, ensure_ascii=True,
+                             allow_nan=False, separators=(",", ":"))
+        fingerprint = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+        index = {f"{key[:46]}.{fingerprint}": value for key, value in index.items()}
+    return index
 
 
 def ai_context(result: dict, *, max_chars: int = 28_000,
@@ -248,7 +261,7 @@ def ai_context(result: dict, *, max_chars: int = 28_000,
             "median", "std_sample", "min", "q1", "q3", "max", "ci_mean_95",
             "ci_mean_method", "constant",
         )}
-    evidence = evidence_index(result)
+    evidence = evidence_index(result, analysis_bound=True)
     context = {
         "schema_version": result.get("schema_version"),
         "note": "All values below were computed locally. Do not invent any other numbers.",
@@ -636,6 +649,19 @@ def markdown_report(result: dict) -> str:
                   f"{_fmt(comparison.get('mean_y_difference_second_minus_first'))} "
                   f"{_fmt((comparison.get('datasets') or [{}])[0].get('unit_y'))}.",
                   "", _markdown_text(comparison.get("limitations")), "", _markdown_text(comparison.get("plot_note"))]
+        linear_comparison = comparison.get("linear_fits") or {}
+        if linear_comparison:
+            lines += ["", "### Separate unweighted linear fits", "", _markdown_text(linear_comparison.get("method"))]
+            for index, fitted in enumerate(linear_comparison.get("fits") or [], 1):
+                parameters, metrics = fitted.get("parameters") or {}, fitted.get("metrics") or {}
+                lines.append(f"- Experiment {index}: success {_fmt(fitted.get('success'))}; "
+                             f"slope {_fmt(parameters.get('slope'))}; intercept {_fmt(parameters.get('intercept'))}; "
+                             f"RMSE {_fmt(metrics.get('rmse'))}; R² {_fmt(metrics.get('r2'))}; "
+                             f"n {_fmt(fitted.get('n_observations'))}; reason {_fmt(fitted.get('reason'))}.")
+            lines += ["", f"Slope difference (2 - 1): {_fmt(linear_comparison.get('slope_difference_second_minus_first'))} "
+                      f"{_fmt(linear_comparison.get('slope_unit'))}; slope ratio (2 / 1): "
+                      f"{_fmt(linear_comparison.get('slope_ratio_second_over_first'))}.",
+                      "", _markdown_text(linear_comparison.get("limitations"))]
         comparison_interval = comparison.get("difference_interval") or {}
         if comparison_interval:
             lines += ["", "### Conditional Welch mean-difference interval", "",
@@ -756,15 +782,20 @@ def export_bundle(
             [{"metric": "status", "value": fit.get("reason") or "No successful fit"}]
         ))
     files["report.md"] = markdown_report(result).encode("utf-8")
+    for name, payload in (charts or {}).items():
+        safe_name = safe_archive_name(name)
+        if safe_name in files or safe_name in ("manifest.json", "report.pdf"):
+            raise ValueError("An additional artifact cannot replace a core export.")
+        files[safe_name] = payload
     if include_pdf:
         from pdf_report import render_report_pdf
 
-        files["report.pdf"] = render_report_pdf(files["report.md"].decode("utf-8"))
-    for name, payload in (charts or {}).items():
-        safe_name = safe_archive_name(name)
-        if safe_name in files or safe_name == "manifest.json":
-            raise ValueError("An additional artifact cannot replace a core export.")
-        files[safe_name] = payload
+        # Only locally produced plot PNGs are selected; HTML and agent audit
+        # artifacts remain separate. Refuse over-limit figures rather than
+        # silently omitting them from the PDF.
+        figures = {name: payload for name, payload in files.items()
+                   if name.startswith("plots/") and name.lower().endswith(".png")}
+        files["report.pdf"] = render_report_pdf(files["report.md"].decode("utf-8"), figures=figures)
     source, roles = result.get("source") or {}, result.get("roles") or {}
     cleaning, ai = result.get("cleaning") or {}, result.get("ai") or {}
     mode = ("mock" if ai.get("source") == "offline_mock" else

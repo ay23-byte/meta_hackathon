@@ -111,3 +111,42 @@ def independent_mean_difference_interval(first: dict, second: dict, *, confirmed
             "assumptions": "Independent observations within and between experiments; approximately normal Y values or sufficient samples. Sampling and protocol comparability are user assertions.",
             "limitations": "Not a paired or repeated-measures analysis. Does not adjust for differing X distributions, conditions, systematic errors or multiple comparisons. "
                            "The interval does not establish causation, equivalence or practical significance."}
+
+
+def compare_linear_fits(first: dict, second: dict, *, confirmed: bool) -> dict:
+    """Independent unweighted OLS summaries, descriptive rather than inference.
+
+    Calling this is an explicit choice of a linear model for BOTH datasets;
+    it does not use the selected model or weights of the main analysis.
+    """
+    from fitting_core import fit_linear
+
+    summary, _ = compare_experiments(first, second, confirmed=confirmed)
+    fits = []
+    for experiment in (first, second):
+        x, y = prepare_pairs(experiment["frame"], experiment["x"], experiment["y"])
+        fit = fit_linear(x, y)
+        fits.append(fit.as_dict())
+    difference, ratio = None, None
+    if all(fit["success"] for fit in fits):
+        a, b = (fit["parameters"]["slope"] for fit in fits)
+        diff = b - a
+        if math.isfinite(diff):
+            difference = diff
+        if a != 0:
+            with np.errstate(all="ignore"):
+                value = float(np.divide(b, a))
+            if math.isfinite(value):
+                ratio = value
+    warnings = []
+    if summary["datasets"][0]["valid_pairs"] != summary["datasets"][1]["valid_pairs"]:
+        warnings.append("The datasets have different numbers of finite pairs.")
+    warnings.append("Instrument uncertainties and condition compatibility were not independently verified.")
+    return {"fits": fits, "slope_difference_second_minus_first": difference,
+            "slope_ratio_second_over_first": ratio,
+            "slope_unit": f"{summary['datasets'][0]['unit_y']} per {summary['datasets'][0]['unit_x']}",
+            "warnings": warnings,
+            "method": "Separate unweighted ordinary least-squares linear fits to finite pairs.",
+            "limitations": "Descriptive only, not a test of differences, causality, equivalence or model validity. "
+                           "Compare residual plots and X ranges; differing conditions, sampling, cleaning and measurement error may affect results. "
+                           "The ratio is unavailable for a zero first slope. The main analysis model and weights are not used."}

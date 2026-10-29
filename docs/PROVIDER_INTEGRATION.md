@@ -293,3 +293,14 @@ narrow pattern-based check with rounding tolerance, not general numerical,
 unit, citation, semantic or scientific validation. A schema-valid response
 without a detected contradiction still needs human review. No live provider
 request was made to verify this change; tests use mock clients.
+
+## Submission-focused update (29 October 2026)
+
+The opt-in structured live test now computes the bundled synthetic dataset via
+`analyze_csv`, builds the same `ai_context` used by the dashboard, and validates
+the returned report and current evidence allowlist. It is not evidence of live
+success until it actually passes with an authorized provider connection. The
+manual `python test_baseten.py` probe now uses the existing adapter, makes one
+request, suppresses response text and exits nonzero on failure. Current compact
+AI evidence IDs contain a fingerprint bound to the analysis data, mapping and
+computed values; ID membership remains **not semantic support**.

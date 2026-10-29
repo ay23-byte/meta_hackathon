@@ -34,3 +34,13 @@ Expected deterministic results (Python 3.11, this repository):
 
 These numbers describe the synthetic file only. They are not a scientific
 discovery and must not be presented as measurements from a real instrument.
+
+## Optional synthetic Ohmic comparison
+
+`synthetic_ohmic_a.csv` and `synthetic_ohmic_b.csv` are hand-constructed
+synthetic examples, **not physical measurements or independent replications**.
+They use `current_A` and `voltage_V`, with small illustrative deviations from
+approximately 10 V/A and 10.25 V/A respectively. Use them only to demonstrate
+user-confirmed mappings, model diagnostics and descriptive comparison. A
+user-supplied 10 ohm theoretical curve is a demonstration assumption; this
+exercise does not validate Ohm's law or establish statistical significance.

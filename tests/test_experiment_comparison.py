@@ -137,3 +137,69 @@ def test_welch_is_separately_opt_in_and_exported(monkeypatch):
     assert not app.exception and not app.error
     assert any("Conditional 95% mean-difference interval" in t.value for t in app.text)
     assert any("Welch mean-difference interval" in c.value for c in app.code)
+
+
+def test_separate_linear_fits_and_export():
+    from evidence_trace import build_evidence_ledger
+    from experiment_comparison import compare_linear_fits
+
+    first = experiment([0, 1, 2, 3], [1, 3, 5, 7])
+    second = experiment([0, 1, 2, 3, 4], [2, 5, 8, 11, 14])
+    comparison, _ = compare_experiments(first, second, confirmed=True)
+    comparison["linear_fits"] = compare_linear_fits(first, second, confirmed=True)
+    fit = comparison["linear_fits"]
+    assert fit["fits"][0]["parameters"]["slope"] == pytest.approx(2)
+    assert fit["fits"][1]["parameters"]["intercept"] == pytest.approx(2)
+    assert fit["slope_difference_second_minus_first"] == pytest.approx(1)
+    assert fit["slope_ratio_second_over_first"] == pytest.approx(1.5)
+    assert any("different numbers" in warning for warning in fit["warnings"])
+    result = {"comparison": comparison}
+    result["evidence_ledger"] = build_evidence_ledger(result)
+    files = export_bundle(result)
+    assert "Separate unweighted linear fits" in files["report.md"].decode()
+    assert any(item["result_path"] == "comparison.linear_fits" for item in result["evidence_ledger"]["items"])
+
+
+def test_linear_comparison_handles_zero_slope_and_bad_mapping():
+    from experiment_comparison import compare_linear_fits
+
+    a = experiment([0, 1, 2], [1, 1, 1])
+    b = experiment([0, 1, 2], [1, 2, 3])
+    assert compare_linear_fits(a, b, confirmed=True)["slope_ratio_second_over_first"] is None
+    b["x"] = "absent"
+    with pytest.raises(ValueError):
+        compare_linear_fits(a, b, confirmed=True)
+    with pytest.raises(ValueError):
+        compare_linear_fits(a, a, confirmed=False)
+
+
+def test_separate_fit_ui_is_opt_in_and_reported(monkeypatch):
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(w for w in app.file_uploader if w.label == "Second experiment CSV").set_value(
+        ("second.csv", b"current,voltage\n0,1\n1,3\n2,5\n3,7\n", "text/csv")).run()
+    next(w for w in app.text_input if w.label == "Second experiment X unit").set_value("A")
+    next(w for w in app.text_input if w.label == "Second experiment Y unit").set_value("V")
+    app.run()
+    next(w for w in app.checkbox if w.label.startswith("I confirm the mapped quantities")).check().run()
+    toggle = next(w for w in app.checkbox if w.label.startswith("Fit separate unweighted lines"))
+    assert not toggle.value
+    toggle.check().run()
+    assert not app.exception and not app.error
+    assert any("Separate unweighted linear fits" in c.value for c in app.code)
+
+
+def test_synthetic_ohmic_demo_known_fit_and_theory():
+    from experiment_comparison import compare_linear_fits
+    from theory_engine import validate_ohmic_prediction
+
+    demo = Path(__file__).resolve().parents[1] / "data" / "demo"
+    a = pd.read_csv(demo / "synthetic_ohmic_a.csv")
+    b = pd.read_csv(demo / "synthetic_ohmic_b.csv")
+    def item(frame):
+        return {"frame": frame, "x": "current_A", "y": "voltage_V", "unit_x": "A", "unit_y": "V"}
+    result = compare_linear_fits(item(a), item(b), confirmed=True)
+    assert result["fits"][0]["parameters"]["slope"] == pytest.approx(9.98857142857143)
+    assert result["fits"][1]["parameters"]["slope"] == pytest.approx(10.26)
+    theory = validate_ohmic_prediction(a.current_A, a.voltage_V, unit_x="A", unit_y="V", resistance_ohm=10, confirmed=True)
+    assert theory["pairs_used"] == 6 and theory["rmse"] == pytest.approx(0.0141421356237)

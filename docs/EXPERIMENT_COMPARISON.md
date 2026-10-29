@@ -7,3 +7,14 @@ Each dataset retains its own filename, SHA-256, mappings, units, paired row coun
 The current JSON and Markdown in the existing ZIP include the optional comparison summary and provenance when confirmed. They do not include second-dataset raw rows or the comparison plot; the first dataset's existing cleaned-data export is unchanged. Uploaded names and other metadata are exportable and may be sensitive. The comparison is never added to the existing provider context; no external call is made. This is a limited two-dataset feature, not a multi-experiment database, model-comparison or inference system.
 
 Tests: `python -m pytest -q tests/test_experiment_comparison.py tests/test_general_app.py tests/test_result_schema.py tests/test_export_safety.py`. They exercise known paired means, missing values, incompatible/missing units, explicit and fresh consent, bounded plotting, Markdown/JSON provenance and UI behavior.
+
+## Optional separate linear fits
+
+The explicitly selected **Fit separate unweighted lines** action fits each
+mapped dataset independently using ordinary least squares. It reports fitted
+parameters, R², RMSE, sample sizes, slope difference and (if the first slope is
+nonzero) a slope ratio. These are descriptive, not a significance test; the main
+fit's model and weights are not reused. An unequal-sample-size warning is
+provided. Instrument uncertainty, paired structure, conditions, sampling and
+cleaning differences require separate review. The computed summaries are
+included in JSON/Markdown and the evidence ledger.

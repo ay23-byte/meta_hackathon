@@ -78,27 +78,24 @@ def test_muse_spark_connectivity():
     if not isinstance(text, str) or not text.strip():
         pytest.fail("Muse Spark returned empty or unusable content.")
     if "hello" not in text.casefold() or "world" not in text.casefold():
-        pytest.fail(f"Muse Spark did not follow the instruction: {text!r}")
+        pytest.fail("Muse Spark returned usable text but did not follow the instruction.")
 
 
 def test_muse_spark_structured_report():
     """The live end-to-end path the dashboard actually uses."""
     _require_key()
-    context = {
-        "scientific_question": "How does voltage vary with current?",
-        "model": "V = mI + b (ordinary least squares)",
-        "results": {
-            "slope": 5.0,
-            "intercept": 0.01,
-            "r_squared": 0.9999,
-            "rmse": 0.02,
-            "n": 11,
-        },
-        "limitations": [
-            "Instrument uncertainty is not available.",
-            "Provenance is not independently verified.",
-        ],
-    }
+    # Use exactly the same deterministic pipeline and compact context as the
+    # general dashboard; these are calculated values, not handwritten fixtures.
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from analyze_dataset import analyze_csv
+    from result_schema import ai_context
+
+    dataset = Path(__file__).resolve().parent / "data/demo/linear_calibration_demo.csv"
+    with TemporaryDirectory(prefix="lablens-live-") as directory:
+        result = analyze_csv(dataset, directory, x="time_s", y="signal_mV")
+    context = ai_context(result, research_question="How does the synthetic signal vary with time?")
 
     try:
         report = ask_muse.generate_interpretation(context)
@@ -107,9 +104,12 @@ def test_muse_spark_structured_report():
         raise
 
     assert isinstance(report, dict)
-    structured = ask_muse.validate_report(report["structured"])
+    structured = ask_muse.validate_report(report["structured"], allowed_evidence_ids=context["result_ids"])
     assert structured is not None, "Live report failed the strict schema."
     assert [s["title"] for s in structured["sections"]] == list(
         ask_muse.REQUIRED_TITLES
     )
     assert len(structured["claims"]) <= ask_muse.MAX_CLAIMS
+
+    assert report["source"] == "live_provider" and report["numeric_guard"]["status"] == "partially_checked"
+    assert report["evidence_index"] == context["evidence_index"]

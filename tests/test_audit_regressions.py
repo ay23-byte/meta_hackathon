@@ -124,3 +124,23 @@ def test_spreadsheet_formula_injection_protected_in_headers_cells_and_legacy_exp
         assert parsed.iloc[0, 0] == "'  =1+1"
         assert parsed.iloc[1, 0] == "'\t@cmd"
         assert parsed.iloc[2, 0] == "safe"
+
+
+def test_connectivity_rejects_truncation_and_reasoning_only(monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+
+    monkeypatch.setenv("BASETEN_API_KEY", "sk-unit-test-fake-key-0000")
+    def client_for(choice):
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+            create=lambda **kwargs: SimpleNamespace(choices=[choice]))))
+    monkeypatch.setattr(ask_muse, "OpenAI", lambda **kwargs: client_for(
+        SimpleNamespace(finish_reason="length", message=SimpleNamespace(content="OK"))))
+    with pytest.raises(RuntimeError, match="complete usable"):
+        ask_muse.check_provider_connectivity()
+    monkeypatch.setattr(ask_muse, "OpenAI", lambda **kwargs: client_for(
+        SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="", reasoning_content="private"))))
+    with pytest.raises(RuntimeError, match="no visible response") as error:
+        ask_muse.check_provider_connectivity()
+    assert "private" not in str(error.value)
