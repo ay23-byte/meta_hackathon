@@ -399,3 +399,18 @@ judging weights Impact 30%, Use of Meta AI Tooling 25%, Technical Depth &
 Execution 20%, Demo 25%. The rules text we read did not state demo-video length
 or repository-visibility requirements; confirm in the participant portal. See
 `docs/HACKATHON_RULES.md`.
+
+### Additional opt-in analysis and PDF export
+
+The general app offers a two-input correlated uncertainty calculator and seeded
+bivariate-normal Monte Carlo quantiles, conditional Welch intervals for independent
+experiment means, and a user-supplied Ohmic resistance comparison. Each requires
+explicit assumptions; the outputs do not establish causation or validate a physical
+model. Monte Carlo quantiles are not confidence intervals, and the Welch interval
+does not account for paired measurements or different X distributions.
+
+Select **Include text-first PDF report in ZIP** to add an optional PDF; figures
+remain separate artifacts. The general CLI also accepts `--pdf`. Oversized PDFs
+are refused rather than silently truncated. PDF layout, accessibility and broad
+Unicode coverage have not been comprehensively verified. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for feature status and limitations.

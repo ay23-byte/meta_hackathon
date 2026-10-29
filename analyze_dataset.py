@@ -73,6 +73,7 @@ def analyze_csv(
     research_question=None,
     report_profile="legacy",
     generate_mock=False,
+    include_pdf=False,
 ):
     """Run the full deterministic pipeline and write every export artifact.
 
@@ -266,7 +267,7 @@ def analyze_csv(
     destination = Path(output_dir) if output_dir else DEFAULT_OUTPUT
     destination.mkdir(parents=True, exist_ok=True)
     exports = export_bundle(result, cleaned_frame=cleaned.working,
-                            descriptive_table=stats_table, charts=chart_files)
+                            descriptive_table=stats_table, charts=chart_files, include_pdf=include_pdf)
     # Preflight all targets before writing any file. Lexically safe archive
     # names alone do not prevent a pre-existing symlink from escaping the
     # output directory, or an export from overwriting the input dataset.
@@ -311,6 +312,7 @@ def build_parser():
     parser.add_argument("--correlation-method", default="pearson", choices=["pearson", "spearman"])
     parser.add_argument("--remove-duplicates", action="store_true")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT))
+    parser.add_argument("--pdf", action="store_true", help="Include a text-first PDF report; figures remain separate files.")
     parser.add_argument("--ai", action="store_true", help="Request an optional Muse Spark report.")
     parser.add_argument("--agent", action="store_true",
                         help="Also run the bounded analysis agent and write its audit trail.")
@@ -357,7 +359,7 @@ def main(argv=None):
             unit_y=args.unit_y, correlation_method=args.correlation_method,
             remove_duplicates=args.remove_duplicates, generate_ai=args.ai,
             section_titles=args.sections, research_question=args.question,
-            report_profile=args.report_profile, generate_mock=args.ai_mock,
+            report_profile=args.report_profile, generate_mock=args.ai_mock, include_pdf=args.pdf,
         )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)

@@ -53,3 +53,19 @@ Weighted, nonlinear, failed, two-point and nonfinite fits are refused; there
 is a maximum of 50 user-supplied candidates. The UI's current candidates and
 intervals are included in JSON and Markdown/ZIP, not the AI context. The CLI
 does not currently expose this interval workflow.
+
+## Correlation and simulation (optional)
+
+For two user-supplied inputs, first-order variance includes `2 rho (df/da) ua
+(df/db) ub`, preserving derivative signs. The correlation is asserted, not
+estimated. Optional seeded Monte Carlo assumes a bivariate normal distribution
+and reports empirical 2.5%, 50%, and 97.5% quantiles; these are not confidence
+intervals. Ratio simulations reject denominators within five standard
+uncertainties of zero or any sampled zero crossing, but normal-ratio tails
+remain problematic. Neither approach validates the distribution or handles
+arbitrary covariance matrices.
+
+The optional Welch comparison assumes independent observations and does not
+adjust for different X distributions or systematic errors. The optional Ohmic
+comparison uses a separately supplied resistance and a zero-intercept model; its
+residual metrics alone are not a significance test or proof of theory.

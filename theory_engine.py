@@ -102,3 +102,47 @@ def ohmic_chapter(result: dict, context: dict) -> dict:
                          "derivation": "conditional_algebra_only", "literature": "not_verified",
                          "apparatus_and_conditions": "user_supplied_or_unknown", "validation": "not_experimental_proof"},
     }
+
+
+def validate_ohmic_prediction(x, y, *, unit_x: str, unit_y: str,
+                              resistance_ohm: float, confirmed: bool) -> dict:
+    """Compare finite measured pairs with the user-supplied model V=R*I.
+
+    The supplied resistance is an external assumption, not fitted from these
+    observations. No raw rows or hypothesis-test claims are returned.
+    """
+    import numpy as np
+
+    if not confirmed:
+        raise ValueError("Confirm current/voltage mapping and the proposed theoretical resistance.")
+    if unit_x not in _CURRENT_SCALE or unit_y not in _VOLTAGE_SCALE:
+        raise ValueError("Recognized current and voltage units are required.")
+    if not _finite_number(resistance_ohm) or resistance_ohm < 0:
+        raise ValueError("The proposed passive resistance must be finite and nonnegative.")
+    try:
+        a, b = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    except (TypeError, ValueError):
+        raise ValueError("Numeric current and voltage arrays are required.") from None
+    if a.ndim != 1 or b.ndim != 1 or len(a) != len(b) or not 2 <= len(a) <= 200_000:
+        raise ValueError("Two equal-length arrays with 2 to 200000 pairs are required.")
+    valid = np.isfinite(a) & np.isfinite(b)
+    if valid.sum() < 2:
+        raise ValueError("At least two finite current/voltage pairs are required.")
+    with np.errstate(all="ignore"):
+        predicted = resistance_ohm * a[valid] * _CURRENT_SCALE[unit_x] / _VOLTAGE_SCALE[unit_y]
+        residuals = b[valid] - predicted
+        mean_residual = float(np.mean(residuals))
+        rmse = float(np.sqrt(np.mean(residuals**2)))
+        mean_absolute = float(np.mean(np.abs(residuals)))
+    if not np.all(np.isfinite(predicted)) or not all(math.isfinite(v) for v in (mean_residual, rmse, mean_absolute)):
+        raise ValueError("The theoretical comparison is nonfinite; check numerical range.")
+    if rmse == 0 and np.any(residuals != 0):
+        raise ValueError("Theoretical residual metrics underflowed; rescale the data.")
+    return {"status": "conditional_user_confirmed", "model": "V = R * I", "resistance_ohm": resistance_ohm,
+            "unit_x": unit_x, "unit_y": unit_y, "pairs_used": int(valid.sum()),
+            "pairs_excluded": int(len(a) - valid.sum()), "mean_residual": mean_residual,
+            "rmse": rmse, "mean_absolute_residual": mean_absolute,
+            "residual_definition": "observed voltage minus user-specified theoretical voltage",
+            "assumptions": "User asserts X is current and Y is voltage and supplies the proposed resistance. V=R*I assumes zero intercept and stable conditions.",
+            "limitations": "Descriptive comparison only; no uncertainty, calibration, systematic error, X error or significance test is inferred. "
+                           "A discrepancy does not establish that Ohm's law is false or identify its cause."}

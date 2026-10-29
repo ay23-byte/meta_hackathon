@@ -176,3 +176,88 @@ def linear_prediction_intervals(fit, candidates) -> dict:
                                              lower_prediction, upper_prediction, strict=True)]
     return {**base, "status": "conditional", "reason": None,
             "degrees_of_freedom": n - 2, "rows": rows}
+
+
+def propagate_correlated(operation: str, a: float, u_a: float, unit_a: str,
+                         b: float, u_b: float, unit_b: str, *, correlation: float,
+                         confirmed: bool) -> dict:
+    """First-order propagation for two user-supplied correlated inputs.
+
+    The supplied correlation describes input errors, not a correlation inferred
+    from data. Covariance is not independently verified by this function.
+    """
+    if not _finite_number(correlation) or not -1 <= correlation <= 1:
+        raise ValueError("Correlation must be a finite number between -1 and 1.")
+    if (u_a == 0 or u_b == 0) and correlation != 0:
+        raise ValueError("Use zero correlation when either input uncertainty is zero.")
+    base = propagate_independent(operation, a, u_a, unit_a, b, u_b, unit_b, confirmed=confirmed)
+    if operation == "sum":
+        ca, cb = u_a, u_b
+    elif operation == "difference":
+        ca, cb = u_a, -u_b
+    elif operation == "product":
+        ca, cb = b * u_a, a * u_b
+    else:
+        ca, cb = u_a / b, -(base["value"] / b) * u_b
+    # Equivalent to sqrt(ca² + cb² + 2*rho*ca*cb), but stable near rho=±1.
+    uncertainty = math.hypot(ca + correlation * cb, math.sqrt(max(0.0, 1.0 - correlation**2)) * cb)
+    if not math.isfinite(uncertainty):
+        raise ValueError("The propagated uncertainty is nonfinite; rescale the inputs.")
+    base["standard_uncertainty"] = uncertainty
+    base["inputs"]["correlation"] = correlation
+    base["sensitivity"] = {"a_standardized_contribution": ca, "b_standardized_contribution": cb,
+                           "note": "Signed derivative times input standard uncertainty; correlated contributions are not independent variance shares."}
+    base["method"] = "First-order propagation with user-supplied correlation: u² = ca² + cb² + 2*rho*ca*cb."
+    base["assumptions"] = "User-supplied standard uncertainties and correlation; local first-order approximation. Correlation is not inferred or independently verified."
+    base["limitations"] = "Not a confidence or prediction interval; systematic effects and higher-order terms are not assessed. Unit labels are not dimensionally validated."
+    return base
+
+
+def monte_carlo_correlated(operation: str, a: float, u_a: float, unit_a: str,
+                           b: float, u_b: float, unit_b: str, *, correlation: float,
+                           confirmed: bool, seed: int, samples: int = 20_000) -> dict:
+    """Propagate an explicitly assumed bivariate normal input distribution.
+
+    Returns empirical central quantiles, not a confidence interval or proof that
+    a distribution describes real measurements. No observations are discarded.
+    """
+    import numpy as np
+
+    base = propagate_correlated(operation, a, u_a, unit_a, b, u_b, unit_b,
+                                correlation=correlation, confirmed=confirmed)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2**32 - 1:
+        raise ValueError("Seed must be an integer between 0 and 4294967295.")
+    if isinstance(samples, bool) or not isinstance(samples, int) or not 1000 <= samples <= 100_000:
+        raise ValueError("Monte Carlo sample count must be between 1000 and 100000.")
+    if operation == "ratio" and u_b > 0 and abs(b) <= 5 * u_b:
+        raise ValueError("Ratio simulation unavailable: the denominator is within five standard uncertainties of zero.")
+    rng = np.random.default_rng(seed)
+    with np.errstate(all="ignore"):
+        z1 = rng.standard_normal(samples)
+        z2 = rng.standard_normal(samples)
+        aa = a + u_a * z1
+        bb = b + u_b * (correlation * z1 + math.sqrt(max(0.0, 1 - correlation**2)) * z2)
+        if operation == "sum":
+            draws = aa + bb
+        elif operation == "difference":
+            draws = aa - bb
+        elif operation == "product":
+            draws = aa * bb
+        else:
+            if np.any(bb == 0) or np.any(np.signbit(bb) != np.signbit(b)):
+                raise ValueError("Ratio simulation crossed zero in the denominator; no samples were discarded.")
+            draws = aa / bb
+        if not np.all(np.isfinite(draws)):
+            raise ValueError("Simulation produced nonfinite values; no samples were discarded.")
+        low, median, high = np.quantile(draws, [0.025, 0.5, 0.975])
+    if not all(math.isfinite(float(v)) for v in (low, median, high)):
+        raise ValueError("Simulation quantiles are nonfinite; rescale the inputs.")
+    return {"status": "conditional_simulation", "inputs": base["inputs"], "equation": base["equation"],
+            "unit": base["unit"], "seed": seed, "samples": samples, "median": float(median),
+            "lower_2_5_percent": float(low), "upper_97_5_percent": float(high),
+            "method": "Seeded Monte Carlo using a user-assumed bivariate normal distribution and empirical central 95% quantiles.",
+            "assumptions": "Input means, standard deviations and correlation are user supplied; bivariate normality is assumed, not inferred or verified.",
+            "limitations": "Simulation quantiles describe the assumed input distribution, not a confidence or prediction interval. "
+                           "Finite draws do not establish coverage, calibration or physical validity. "
+                           "For ratios, a normal denominator has nonzero probability near zero even when simulations do not cross zero.",
+            "warning": base["warning"]}

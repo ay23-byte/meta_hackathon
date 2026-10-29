@@ -10,15 +10,15 @@ and pip check pass. A green suite is not a scientific or security certificate.
 | --- | --- | --- |
 | CSV/TSV ingestion, cleaning, statistics, plots, fit and diagnostics | Implemented and verified offline | `data_io.py`, `cleaning.py`, `fitting_core.py`; ingestion, numerical and plotting tests. Bounded delimited formats only. |
 | Evidence IDs and deterministic insight paths | Partially implemented | `result_schema.evidence_index`, `insight_engine.py`, `tests/test_insight_engine.py`; ID existence is not semantic claim verification and report evidence is not yet a complete unified ledger. |
-| Uncertainty | Partially implemented | `uncertainty_engine.py`, `tests/test_uncertainty_*`, `tests/test_prediction_intervals.py`; unweighted linear intervals and independent first-order calculator; general covariance and Monte Carlo not implemented. |
-| Experiment comparison | Partially implemented | `experiment_comparison.py`, `tests/test_experiment_comparison.py`; two explicitly mapped datasets, descriptive means only, not full experiment management or inferential comparison. |
-| Theory validation | Partially implemented | `theory_engine.py`, `tests/test_theory_engine.py`; user-confirmed Ohmic educational chapter, not broad tested theory registry or general prediction/observation validation. |
-| AI validation and provider | Partially implemented | `ask_muse.py` and provider tests validate schemas and evidence ID allowlists; numerical and semantic claim support is not independently verified. |
-| JSON/CSV/Markdown/ZIP and software versions | Implemented and verified offline | `result_schema.py`, `tests/test_result_schema.py`, `tests/test_export_safety.py`; not a complete reproducibility manifest. |
-| PDF export | Not implemented | No PDF artifact or PDF-open regression test; do not claim support. |
+| Uncertainty | Partially implemented | `uncertainty_engine.py`, `tests/test_uncertainty_*`, `tests/test_prediction_intervals.py`; unweighted linear intervals and independent first-order calculator; two-input correlated first-order propagation and seeded bivariate-normal Monte Carlo added; arbitrary covariance matrices and general uncertainty-aware significance remain incomplete. |
+| Experiment comparison | Partially implemented | `experiment_comparison.py`, `tests/test_experiment_comparison.py`; two explicitly mapped datasets, descriptive means and opt-in conditional Welch interval; not paired inference or full experiment management. |
+| Theory validation | Partially implemented | `theory_engine.py`, `tests/test_theory_engine.py`; user-confirmed Ohmic chapter and explicitly supplied resistance prediction comparison; no broad theory registry or general validation. |
+| AI validation and provider | Partially implemented | `ask_muse.py` and provider tests validate schemas and evidence ID allowlists; narrow numeric contradiction and evidence-ID checks; semantic claim support, units and citations are not independently verified. |
+| JSON/CSV/Markdown/ZIP and software versions | Implemented and verified offline | `result_schema.py`, `tests/test_result_schema.py`, `tests/test_export_safety.py`; unsigned manifest includes artifact hashes and selected provenance, not a complete environment lock. |
+| PDF export | Partially implemented | Opt-in text-first PDF, tested by parsing; figures are separate, layout and broad Unicode/accessibility not comprehensively verified. |
 | Literature retrieval and verification | Blocked | External retrieval host access/usable source not available in this sandbox; no references were retrieved or verified. |
 | Live Muse Spark | Blocked | Two live tests skipped by default; no authorized successful live request in this session. |
-| End-to-end demo and browser | Implemented but incompletely verified | Previous session documented one Linux headless Chromium path; this session must independently check startup and available smoke paths. Demo does not yet cover all requested features. |
+| End-to-end demo and browser | Implemented but incompletely verified | Linux headless Chromium covered synthetic demo, mock report and ZIP manifest in the prior increment; current increment includes targeted Streamlit UI tests and HTTP smoke. Demo does not yet cover all requested features. |
 | Broad security/performance, Windows and scientific certification | Implemented but incompletely verified | Existing safety tests and cross-platform CI configuration; no formal audit, current local Windows test, impact study, or universal correctness claim. |
 
 ## Execution order
@@ -60,10 +60,10 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
   filenames, column names and units can be sensitive. Existing core artifacts
   cannot be overwritten by additional chart names. Tests:
   `tests/test_reproducibility_manifest.py`, `tests/test_export_safety.py`.
-- **Still incomplete:** general covariance/Monte Carlo/sensitivity and
-  uncertainty-aware significance; multi-experiment management and inference;
-  theory prediction validation; unit-aware and semantic AI checking; verified
-  literature; PDF; integrated end-to-end demo. No externally retrieved source
+- **Still incomplete:** arbitrary covariance and general uncertainty-aware significance;
+  broader multi-experiment management and inference; general theory prediction
+  validation; unit-aware and semantic AI checking; verified literature;
+  figure-embedded/accessibility-reviewed PDF; integrated end-to-end demo. No externally retrieved source
   or genuine live model response is asserted. Do not label these complete.
 
 ## Verification for this increment (29 October 2026)
@@ -82,5 +82,25 @@ smoke, review diffs, and record exact outcomes. Do not commit or push.
   errors were recorded. This is a narrow scripted path, not a manual full
   workflow, Windows test, accessibility review or live AI call.
 - Offline agent demo: all seven expected states. No live provider request,
-  external literature retrieval, PDF export or Windows execution was made.
+  external literature retrieval, PDF export or Windows execution was made in that earlier increment.
   The broader features listed as partial/not implemented/blocked remain so.
+
+## Subsequent uncommitted increment (29 October 2026)
+
+- Added opt-in two-input correlated uncertainty propagation, bounded seeded
+  bivariate-normal simulation and sensitivity, with explicit distribution and
+  ratio-tail limitations; inputs, assumptions and simulation seed are exported.
+- Added an optional text-first PDF (figures separately packaged), bounded by
+  character and page limits, with fallback to other exports. PDF parse and
+  artifact-hash regression tests use the development-only `pypdf` dependency.
+- Added an opt-in conditional Welch mean-difference interval for independent
+  samples. It is not paired inference and does not adjust for X or confounders.
+- Added user-confirmed Ohmic predicted-versus-observed residual metrics using a
+  separately supplied resistance and recognized units. It is descriptive, not
+  a hypothesis test or proof of physical laws.
+- Verification: targeted suites passed; complete offline suite **602 passed,
+  2 skipped** (opt-in live provider); Ruff, pip check, compileall and diff
+  check passed. Streamlit startup and root/health HTTP 200 on Linux. No current
+  Windows run, real provider call, external literature or full interactive
+  end-to-end test of all new paths. These changes have not been committed or
+  pushed to PR #19.

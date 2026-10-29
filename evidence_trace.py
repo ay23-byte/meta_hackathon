@@ -36,8 +36,9 @@ def build_evidence_ledger(result: dict) -> dict:
     insights = (result.get("insights") or {}).get("items") or []
     paths = {path for card in insights for path in (card.get("evidence_paths") or [])}
     paths.update(("source.sha256", "roles.x", "roles.y", "fit.model", "fit.success"))
-    for path in ("comparison.mean_y_difference_second_minus_first", "comparison.datasets",
-                 "uncertainty.parameters", "predictions.intervals", "research.chapter.derived"):
+    for path in ("comparison.mean_y_difference_second_minus_first", "comparison.datasets", "comparison.difference_interval",
+                 "uncertainty.parameters", "predictions.intervals", "research.chapter.derived",
+                 "correlated_propagation", "monte_carlo_propagation", "theory_validation"):
         if _resolve(result, path)[0]:
             paths.add(path)
     source = result.get("source") or {}
@@ -52,7 +53,7 @@ def build_evidence_ledger(result: dict) -> dict:
         identifier = f"ev-{fingerprint[:12]}-{digest}"
         kind = ("user_supplied_metadata" if path.startswith("roles.") else
                 "source_provenance" if path.startswith("source.") else
-                "statistical_estimate" if path.startswith(("uncertainty.", "predictions.")) else
+                "statistical_estimate" if path.startswith(("uncertainty.", "predictions.", "correlated_propagation", "monte_carlo_propagation")) else
                 "derived_result")
         item = {"id": identifier, "type": kind, "result_path": path, "value": value,
                 "source_sha256": source.get("sha256"),

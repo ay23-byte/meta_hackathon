@@ -601,6 +601,27 @@ def markdown_report(result: dict) -> str:
                   "", _markdown_text(propagation.get("limitations"))]
         if propagation.get("warning"):
             lines += ["", f"Warning: {_markdown_text(propagation['warning'])}"]
+    correlated = result.get("correlated_propagation") or {}
+    if correlated:
+        inputs = correlated.get("inputs") or {}
+        lines += ["", "## Correlated user-supplied uncertainty (conditional)", "",
+                  "Input quantities, uncertainties and correlation are user assertions, not measurements inferred by LabLens.",
+                  f"- Operation: {_fmt(correlated.get('equation'))}; a: {_fmt(inputs.get('a'))} ± {_fmt(inputs.get('u_a'))} {_fmt(inputs.get('unit_a'))}; "
+                  f"b: {_fmt(inputs.get('b'))} ± {_fmt(inputs.get('u_b'))} {_fmt(inputs.get('unit_b'))}; correlation: {_fmt(inputs.get('correlation'))}",
+                  f"- First-order result: {_fmt(correlated.get('value'))} ± {_fmt(correlated.get('standard_uncertainty'))} {_fmt(correlated.get('unit'))}",
+                  f"- Sensitivity: {_fmt(correlated.get('sensitivity'))}", "",
+                  _markdown_text(correlated.get("method")), "", _markdown_text(correlated.get("assumptions")),
+                  "", _markdown_text(correlated.get("limitations"))]
+        if correlated.get("warning"):
+            lines += ["", f"Warning: {_markdown_text(correlated['warning'])}"]
+    simulation = result.get("monte_carlo_propagation") or {}
+    if simulation:
+        lines += ["", "## Monte Carlo propagation (conditional simulation)", "",
+                  f"- Seed: {_fmt(simulation.get('seed'))}; draws: {_fmt(simulation.get('samples'))}",
+                  f"- Median: {_fmt(simulation.get('median'))}; empirical central 95% quantiles: "
+                  f"[{_fmt(simulation.get('lower_2_5_percent'))}, {_fmt(simulation.get('upper_97_5_percent'))}] {_fmt(simulation.get('unit'))}",
+                  "", _markdown_text(simulation.get("method")), "", _markdown_text(simulation.get("assumptions")),
+                  "", _markdown_text(simulation.get("limitations"))]
     comparison = result.get("comparison") or {}
     if comparison:
         lines += ["", "## Experiment comparison (user-confirmed, not independently verified)", "",
@@ -615,6 +636,22 @@ def markdown_report(result: dict) -> str:
                   f"{_fmt(comparison.get('mean_y_difference_second_minus_first'))} "
                   f"{_fmt((comparison.get('datasets') or [{}])[0].get('unit_y'))}.",
                   "", _markdown_text(comparison.get("limitations")), "", _markdown_text(comparison.get("plot_note"))]
+        comparison_interval = comparison.get("difference_interval") or {}
+        if comparison_interval:
+            lines += ["", "### Conditional Welch mean-difference interval", "",
+                      f"Difference: {_fmt(comparison_interval.get('difference_second_minus_first'))}; "
+                      f"95% interval: [{_fmt(comparison_interval.get('lower'))}, {_fmt(comparison_interval.get('upper'))}] "
+                      f"{_fmt(comparison_interval.get('unit'))}; df: {_fmt(comparison_interval.get('degrees_of_freedom'))}.",
+                      "", _markdown_text(comparison_interval.get("method")), "", _markdown_text(comparison_interval.get("assumptions")),
+                      "", _markdown_text(comparison_interval.get("limitations"))]
+    theory_check = result.get("theory_validation") or {}
+    if theory_check:
+        lines += ["", "## User-proposed Ohmic theory comparison", "",
+                  f"- Model: {_fmt(theory_check.get('model'))}; user-proposed resistance: {_fmt(theory_check.get('resistance_ohm'))} ohm",
+                  f"- Pairs used: {_fmt(theory_check.get('pairs_used'))}; excluded: {_fmt(theory_check.get('pairs_excluded'))}",
+                  f"- Observed minus theoretical voltage: mean {_fmt(theory_check.get('mean_residual'))}; "
+                  f"RMSE {_fmt(theory_check.get('rmse'))}; mean absolute residual {_fmt(theory_check.get('mean_absolute_residual'))} {_fmt(theory_check.get('unit_y'))}",
+                  "", _markdown_text(theory_check.get("assumptions")), "", _markdown_text(theory_check.get("limitations"))]
     predictions = result.get("predictions") or {}
     if predictions:
         lines += ["", "## Follow-up predictions (model-based, not observations)", "",
@@ -691,6 +728,7 @@ def export_bundle(
     cleaned_frame: pd.DataFrame | None = None,
     descriptive_table: pd.DataFrame | None = None,
     charts: dict[str, bytes] | None = None,
+    include_pdf: bool = False,
 ) -> dict[str, bytes]:
     """Return ``{filename: bytes}`` for every configured export artifact."""
     files: dict[str, bytes] = {"results.json": results_json(result)}
@@ -718,6 +756,10 @@ def export_bundle(
             [{"metric": "status", "value": fit.get("reason") or "No successful fit"}]
         ))
     files["report.md"] = markdown_report(result).encode("utf-8")
+    if include_pdf:
+        from pdf_report import render_report_pdf
+
+        files["report.pdf"] = render_report_pdf(files["report.md"].decode("utf-8"))
     for name, payload in (charts or {}).items():
         safe_name = safe_archive_name(name)
         if safe_name in files or safe_name == "manifest.json":
@@ -736,6 +778,8 @@ def export_bundle(
                           ("x", "y", "group", "time", "uncertainty", "secondary_y", "unit_x", "unit_y", "model", "degree", "domain", "correlation_method")},
         "software": result.get("software"), "provider": {"mode": mode, "model": ai.get("model") if ai else None},
         "evidence_fingerprint": (result.get("evidence_ledger") or {}).get("analysis_fingerprint"),
+        "simulation": ({key: (result.get("monte_carlo_propagation") or {}).get(key) for key in ("seed", "samples", "method")}
+                       if result.get("monte_carlo_propagation") else None),
         "artifacts": [{"name": name, "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
                       for name, payload in sorted(files.items())],
         "limitations": "Checksums detect changes, not authenticity. Manifest excludes its own hash and is not a complete environment lock.",
