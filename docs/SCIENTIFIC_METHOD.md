@@ -18,6 +18,6 @@
 6. Export JSON/CSV/Markdown/ZIP and optional PDF with manifest and figures.
    Checksums detect changes but do not establish authenticity or provenance.
 
-The model is `llama3.2:1b` from Meta Llama, served through local Ollama, not
+The selected model is `llama3.2:1b` or `llama3.2:3b` from Meta Llama, served through local Ollama, not
 Muse Spark or Muse Glimmer. Its output must not replace calculations or
 measurements. See `MATHEMATICS_AND_UNCERTAINTY.md` for method-specific bounds.
