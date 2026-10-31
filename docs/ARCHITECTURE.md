@@ -218,3 +218,17 @@ mode, evidence fingerprint and SHA-256 of each other exported artifact. It is
 not signed, is not a full environment lock, and does not embed raw data beyond
 what other bundle artifacts already contain. An extra artifact cannot overwrite
 core report files. `docs/ROADMAP.md` records remaining scope and checks.
+
+## Local Ollama path (31 October 2026)
+
+`general_app.py` → compact `result_schema.ai_context()` → explicitly requested
+`local_meta_provider.py` → fixed loopback Ollama `/api/tags` and `/api/chat`
+→ `ask_muse.validate_report()` and `ai_guard.check_report_numbers()` → existing
+result schema, JSON/Markdown/PDF/manifest. Loopback is on the application server;
+requests bypass proxies, reject redirects, use bounded size and finite timeout,
+and do not pull models. `llama3.2:1b` is distinct from Muse Spark. Remote Muse
+and offline mock are separate actions. Session hashes invalidate local reports
+on analysis/question changes. No provider is contacted on normal reruns.
+Prompt injection and semantic correctness are not solved by JSON validation;
+the numerical guard checks only explicit patterns. Real model availability and
+performance require local verification.

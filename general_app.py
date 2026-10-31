@@ -413,6 +413,19 @@ if secondary_y:
         "dual axes can imply relationships that depend only on scale choices."
     )
 
+with st.expander("Experiment template guidance (optional)"):
+    from experiment_templates import TEMPLATES
+
+    template_name = st.selectbox("Educational template (does not select roles or model)",
+                                 ["None", *TEMPLATES])
+    if template_name != "None":
+        template = TEMPLATES[template_name]
+        st.text(f"Suggested X: {template['x']} · suggested Y: {template['y']}")
+        st.text(f"Conditional relationship: {template['model']}")
+        st.caption(template["parameters"])
+        st.caption(template["assumptions"])
+        st.warning("Guidance only: explicitly choose and verify roles, units and model. No experiment is identified from its filename or columns.")
+
 with st.expander("Research context and offline learning (optional)"):
     research_enabled = st.checkbox("Include offline theory and reliability notes", value=False)
     research_context = None
@@ -1197,6 +1210,7 @@ regenerate_live = st.checkbox(
     help="Explicitly request a new provider call even if a validated report exists. May consume credits.",
 )
 if st.button("Generate evidence-grounded interpretation", type="primary"):
+    st.session_state["ollama_active"] = False
     # Reuse ONLY a live report for the same context. A mock never blocks a
     # provider request. The in-flight flag prevents duplicate rapid clicks.
     if _current_report("live") and not regenerate_live:
@@ -1241,6 +1255,7 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
 
 if st.button("Preview deterministic OFFLINE MOCK report (no API key, NOT AI)",
              key="offline_mock_report"):
+    st.session_state["ollama_active"] = False
     # The mock action reuses ONLY a mock; it never constructs a provider client.
     if _current_report("mock"):
         _set_active_report("mock")
@@ -1309,6 +1324,79 @@ if current_report:
 else:
     st.caption("No report has been generated. The app works fully without an API key; "
                "the offline MOCK is always labelled as a mock.")
+
+
+with st.expander("Meta Llama 3.2 1B — Local Ollama (optional)"):
+    st.caption("Local inference uses the Ollama service on this application's machine, not the browser's machine. "
+               "No model is downloaded and no Baseten request is made by these actions. "
+               "A compact analysis summary and your question are sent to local Ollama only. "
+               "AI explanations are suggestions requiring scientific verification.")
+    if st.checkbox("Enable local Ollama controls", value=False):
+        import local_meta_provider
+
+        if st.button("Check local Ollama and model"):
+            st.session_state["ollama_status"] = local_meta_provider.check_ollama_status()
+        local_status = st.session_state.get("ollama_status")
+        if local_status:
+            st.text(f"Ollama running: {local_status['running']} · model available: {local_status['model_available']}. "
+                    f"{local_status['message']}")
+        else:
+            st.caption("Status not checked. Checking does not download or run the model.")
+        local_question = st.text_input("Ask a question about this analysis (optional)", max_chars=500,
+                                       help="The question is treated as untrusted context, not as computed evidence.")
+        local_hash = _hash({"analysis": context_hash, "question": local_question.strip(), "model": local_meta_provider.MODEL})
+        if st.button("Generate local Llama report", key="ollama_generate_button"):
+            _set_active_report(None)
+            st.session_state["ollama_active"] = False
+            st.session_state.pop("ollama_error", None)
+            try:
+                local_context = dict(context)
+                if local_question.strip():
+                    local_context["research_question"] = local_question.strip()
+                with st.spinner("Generating a local Llama report; this may take several minutes..."):
+                    local_wrapper = local_meta_provider.generate_scientific_report(
+                        local_context, list(effective_titles), profile=report_profile)
+                if not isinstance(local_wrapper, dict) or local_wrapper.get("source") != "local_ollama":
+                    raise RuntimeError("The local provider returned invalid provenance.")
+                validated = ask_muse.validate_report(local_wrapper.get("structured"), list(effective_titles),
+                                                     profile=report_profile,
+                                                     allowed_evidence_ids=local_context.get("result_ids"))
+                if validated is None:
+                    raise RuntimeError("Local report failed schema or evidence validation.")
+                from ai_guard import check_report_numbers
+                guard = check_report_numbers(validated, local_context)
+                if guard["status"] == "contradiction":
+                    raise RuntimeError("Local report contradicts current computed results or evidence IDs.")
+                local_wrapper["structured"] = validated
+                local_wrapper["numeric_guard"] = guard
+                local_wrapper["evidence_index"] = local_context.get("evidence_index", {})
+                local_wrapper["analysis_fingerprint"] = local_hash
+                local_wrapper["validation_status"] = "validated"
+                from datetime import datetime, timezone
+                local_wrapper["validated_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                st.session_state["ollama_report"] = {"hash": local_hash, "wrapper": local_wrapper}
+                st.session_state["ollama_active"] = True
+            except (ValueError, RuntimeError) as exc:
+                st.session_state["ollama_error"] = _safe_error(exc)
+        local_error = st.session_state.get("ollama_error")
+        if local_error:
+            st.error(f"Local Ollama request failed: {local_error}")
+            st.caption("No provider substitution occurred; deterministic results and exports remain available.")
+        local_saved = st.session_state.get("ollama_report") or {}
+        if st.session_state.get("ollama_active") and local_saved.get("hash") == local_hash:
+            local_wrapper = local_saved["wrapper"]
+            result["ai"] = local_wrapper
+            st.success("Local Llama response received and structurally checked; scientific meaning remains unverified.")
+            st.caption(local_wrapper["numeric_guard"]["limitations"])
+            for section in local_wrapper["structured"]["sections"]:
+                st.markdown(f"**{section['title']}**")
+                st.text(section["content"])
+            for claim in local_wrapper["structured"]["claims"]:
+                st.text(f"Claim (unverified): {claim['claim']}")
+                st.caption(f"Evidence IDs: {', '.join(claim.get('evidence_ids') or [])}. "
+                           f"Limitation: {claim['limitation']}")
+        elif st.session_state.get("ollama_active"):
+            st.caption("Local report is stale after a data, settings or question change; request a new report.")
 
 
 # Optional second dataset remains local and is not included in AI context.

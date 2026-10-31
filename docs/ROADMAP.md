@@ -172,3 +172,24 @@ full Linux suite **611 passed, 2 skipped**, Ruff, pip check, compilation and
 diff check passed. A fresh synthetic CLI export yielded 12 PDF pages, including
 five figure pages each containing an image object; all manifest hashes matched.
 Accessibility, broad Unicode and visual layout have not been fully audited.
+
+## Local Llama increment (31 October 2026)
+
+- `local_meta_provider.py` adds user-triggered fixed-loopback Ollama status and
+  `llama3.2:1b` structured report generation; it uses the existing schema and
+  limited numerical guard, does not pull models, contact Baseten, follow
+  redirects, or silently fall back. Local response provenance is retained in
+  exports. The dashboard's local question requests a full structured report;
+  this is not an unrestricted chat or independently verified QA system.
+- Five scientific templates provide guidance only; automatic scientific
+  transformations and a broad physical theory-validation engine are not
+  implemented. Existing generic calculations, Muse provider and mock remain.
+- Baseline before changes: 611 passed, 2 skipped. Final Linux full suite:
+  623 passed, 2 skipped (opt-in Muse live tests). Ruff, pip check, compileall,
+  diff check and Streamlit root/health HTTP checks passed. All seven offline
+  agent demo cases reached their expected states.
+- This sandbox has no running Ollama service or installed model. The real
+  local-model round trip, Windows local installation, meaningful model-output
+  quality, event eligibility and actual license compliance remain unverified.
+  Automated provider tests use stubs; a green test suite does not prove model
+  behavior, scientific correctness, or hackathon compliance.

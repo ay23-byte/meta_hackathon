@@ -420,3 +420,34 @@ walkthrough in [`docs/LIVE_DEMO_GUIDE.md`](docs/LIVE_DEMO_GUIDE.md). The two
 constructed datasets are not real measurements or independent replications.
 The optional comparison fits separate unweighted straight lines and reports
 descriptive differences; it does not establish statistical significance.
+
+## Optional local Meta Llama 3.2 1B (Ollama)
+
+The general dashboard supports **Meta Llama 3.2 1B — Local Ollama** separately
+from the optional Muse Spark/Baseten provider and the deterministic offline
+mock. Python computes all results. On the same machine running Streamlit, start
+Ollama and install `llama3.2:1b` yourself; LabLens never downloads a model.
+
+```powershell
+# Install Ollama separately from its official distribution first.
+ollama serve                    # only if the Ollama service is not already running
+ollama pull llama3.2:1b         # explicit one-time model download by the user
+python -m streamlit run general_app.py
+```
+
+In **Meta Llama 3.2 1B — Local Ollama (optional)**, enable controls and press
+**Check local Ollama and model**, then **Generate local Llama report**. You can
+add a question about the current analysis before generating. The application
+sends a compact summary to `127.0.0.1:11434` on the **server machine**, not the
+user's browser. If Streamlit is hosted remotely, it cannot reach the Ollama
+process on your personal Windows machine without a separate, deliberately
+configured secure architecture; this app does not expose or proxy Ollama.
+Never expose Ollama publicly for a demo.
+
+Responses must pass the existing report schema, evidence-ID checks, and a
+limited numerical contradiction guard. AI meaning, unsupported numbers, units,
+citations and scientific conclusions remain unverified; a small model may fail
+JSON/schema validation. A failed request never becomes a mock or a remote call.
+The five optional experiment templates are educational guidance only: they do
+not choose variables, infer a physical experiment, or perform new domain-specific
+calculations. See `docs/DEMO_GUIDE.md` and `docs/SCIENTIFIC_METHOD.md`.
