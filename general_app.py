@@ -1326,7 +1326,7 @@ else:
                "the offline MOCK is always labelled as a mock.")
 
 
-with st.expander("Meta Llama 3.2 1B — Local Ollama (optional)"):
+with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
     st.caption("Local inference uses the Ollama service on this application's machine, not the browser's machine. "
                "No model is downloaded and no Baseten request is made by these actions. "
                "A compact analysis summary and your question are sent to local Ollama only. "
@@ -1334,9 +1334,13 @@ with st.expander("Meta Llama 3.2 1B — Local Ollama (optional)"):
     if st.checkbox("Enable local Ollama controls", value=False):
         import local_meta_provider
 
+        local_model = st.selectbox("Local Ollama model", list(local_meta_provider.SUPPORTED_MODELS),
+                                   format_func=lambda model: local_meta_provider.SUPPORTED_MODELS[model])
         if st.button("Check local Ollama and model"):
-            st.session_state["ollama_status"] = local_meta_provider.check_ollama_status()
-        local_status = st.session_state.get("ollama_status")
+            st.session_state["ollama_status"] = {"model": local_model,
+                                                  "status": local_meta_provider.check_ollama_status(local_model)}
+        stored_status = st.session_state.get("ollama_status") or {}
+        local_status = stored_status.get("status") if stored_status.get("model") == local_model else None
         if local_status:
             st.text(f"Ollama running: {local_status['running']} · model available: {local_status['model_available']}. "
                     f"{local_status['message']}")
@@ -1344,7 +1348,7 @@ with st.expander("Meta Llama 3.2 1B — Local Ollama (optional)"):
             st.caption("Status not checked. Checking does not download or run the model.")
         local_question = st.text_input("Ask a question about this analysis (optional)", max_chars=500,
                                        help="The question is treated as untrusted context, not as computed evidence.")
-        local_hash = _hash({"analysis": context_hash, "question": local_question.strip(), "model": local_meta_provider.MODEL})
+        local_hash = _hash({"analysis": context_hash, "question": local_question.strip(), "model": local_model})
         if st.button("Generate local Llama report", key="ollama_generate_button"):
             _set_active_report(None)
             st.session_state["ollama_active"] = False
@@ -1355,7 +1359,7 @@ with st.expander("Meta Llama 3.2 1B — Local Ollama (optional)"):
                     local_context["research_question"] = local_question.strip()
                 with st.spinner("Generating a local Llama report; this may take several minutes..."):
                     local_wrapper = local_meta_provider.generate_scientific_report(
-                        local_context, list(effective_titles), profile=report_profile)
+                        local_context, list(effective_titles), profile=report_profile, model=local_model)
                 if not isinstance(local_wrapper, dict) or local_wrapper.get("source") != "local_ollama":
                     raise RuntimeError("The local provider returned invalid provenance.")
                 validated = ask_muse.validate_report(local_wrapper.get("structured"), list(effective_titles),

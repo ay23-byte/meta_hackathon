@@ -423,20 +423,20 @@ descriptive differences; it does not establish statistical significance.
 
 ## Optional local Meta Llama 3.2 1B (Ollama)
 
-The general dashboard supports **Meta Llama 3.2 1B — Local Ollama** separately
+The general dashboard supports **Meta Llama 3.2 1B and 3B — Local Ollama** separately
 from the optional Muse Spark/Baseten provider and the deterministic offline
 mock. Python computes all results. On the same machine running Streamlit, start
-Ollama and install `llama3.2:1b` yourself; LabLens never downloads a model.
+Ollama and install your chosen model yourself; LabLens never downloads a model.
 
 ```powershell
 # Install Ollama separately from its official distribution first.
 ollama serve                    # only if the Ollama service is not already running
-ollama pull llama3.2:1b         # explicit one-time model download by the user
+ollama pull llama3.2:3b         # explicit one-time model download by the user
 python -m streamlit run general_app.py
 ```
 
-In **Meta Llama 3.2 1B — Local Ollama (optional)**, enable controls and press
-**Check local Ollama and model**, then **Generate local Llama report**. You can
+In **Meta Llama 3.2 — Local Ollama (optional)**, enable controls, select 1B or 3B,
+press **Check local Ollama and model**, then **Generate local Llama report**. You can
 add a question about the current analysis before generating. The application
 sends a compact summary to `127.0.0.1:11434` on the **server machine**, not the
 user's browser. If Streamlit is hosted remotely, it cannot reach the Ollama
