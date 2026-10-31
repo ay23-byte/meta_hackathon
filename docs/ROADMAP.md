@@ -193,3 +193,22 @@ Accessibility, broad Unicode and visual layout have not been fully audited.
   quality, event eligibility and actual license compliance remain unverified.
   Automated provider tests use stubs; a green test suite does not prove model
   behavior, scientific correctness, or hackathon compliance.
+
+## Hosted model increment
+
+The separate hosted adapter is opt-in and reads process environment settings
+only, with no default endpoint, no SDK retries and no provider fallback. It
+uses the existing evidence registry and strict report/numeric checks. The
+configured identifier is requested rather than independently verified; semantic
+claim support and general units/citations remain unverified. Hosted success,
+provider contract, endpoint authenticity, account entitlement and credit cost
+are blocked pending user-confirmed provider details; mocked tests are not live
+verification. The dashboard requires consent and an explicit button click.
+
+Verification for the hosted increment: initial Linux baseline **628 passed,
+2 skipped**; final **651 passed, 2 skipped** (opt-in Muse live tests). Ruff,
+pip check, compilation and diff check passed; Streamlit root and health
+returned HTTP 200. All seven offline agent demos reached expected states.
+Provider tests use fake clients. No hosted or other live AI request was made,
+and no endpoint or credit entitlement was verified. No current Windows
+execution or external security audit was performed.

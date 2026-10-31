@@ -801,6 +801,7 @@ def export_bundle(
     mode = ("mock" if ai.get("source") == "offline_mock" else
             "live" if ai.get("source") == "live_provider" else
             "local_ollama" if ai.get("source") == "local_ollama" else
+            "hosted" if ai.get("source") == "hosted_model" else
             "unknown" if ai else "offline")
     manifest = {
         "manifest_version": "1.0", "generated_at_utc": result.get("generated_at_utc"),

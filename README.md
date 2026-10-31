@@ -451,3 +451,12 @@ JSON/schema validation. A failed request never becomes a mock or a remote call.
 The five optional experiment templates are educational guidance only: they do
 not choose variables, infer a physical experiment, or perform new domain-specific
 calculations. See `docs/DEMO_GUIDE.md` and `docs/SCIENTIFIC_METHOD.md`.
+
+### Optional user-configured hosted model
+
+A separate hosted adapter can be enabled only with explicitly configured process
+variables, user consent, and a button press. It defaults to the requested
+`meta-models/Muse-Glimmer-30B` identifier but **does not include or verify an
+endpoint, model entitlement, free credits, or pricing**. No real hosted request
+has been verified here. See [hosted setup and safety](docs/HOSTED_MODEL_SETUP.md)
+before configuring it. Do not share credentials or sensitive experiment context.
