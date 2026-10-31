@@ -1211,6 +1211,7 @@ regenerate_live = st.checkbox(
 )
 if st.button("Generate evidence-grounded interpretation", type="primary"):
     st.session_state["ollama_active"] = False
+    st.session_state["hosted_active"] = False
     # Reuse ONLY a live report for the same context. A mock never blocks a
     # provider request. The in-flight flag prevents duplicate rapid clicks.
     if _current_report("live") and not regenerate_live:
@@ -1256,6 +1257,7 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
 if st.button("Preview deterministic OFFLINE MOCK report (no API key, NOT AI)",
              key="offline_mock_report"):
     st.session_state["ollama_active"] = False
+    st.session_state["hosted_active"] = False
     # The mock action reuses ONLY a mock; it never constructs a provider client.
     if _current_report("mock"):
         _set_active_report("mock")
@@ -1350,6 +1352,7 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
                                        help="The question is treated as untrusted context, not as computed evidence.")
         local_hash = _hash({"analysis": context_hash, "question": local_question.strip(), "model": local_model})
         if st.button("Generate local Llama report", key="ollama_generate_button"):
+            st.session_state["hosted_active"] = False
             _set_active_report(None)
             st.session_state["ollama_active"] = False
             st.session_state.pop("ollama_error", None)
@@ -1401,6 +1404,76 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
                            f"Limitation: {claim['limitation']}")
         elif st.session_state.get("ollama_active"):
             st.caption("Local report is stale after a data, settings or question change; request a new report.")
+
+
+with st.expander("Hosted model (explicit configuration and consent)"):
+    import hosted_model_provider
+
+    if st.checkbox("Show hosted model controls", value=False):
+        hosted_status = hosted_model_provider.configuration_status()
+        st.caption("Configuration check only; it does not verify endpoint authenticity, free credits, access or live connectivity.")
+        st.text(f"Hosted configuration: {'ready for review' if hosted_status['configured'] else 'incomplete'}. "
+                f"Model: {hosted_status['model'] or 'not available'}. {hosted_status['message']}")
+        st.warning("A hosted request transmits the compact analysis context, including column names and selected research context. "
+                   "Do not include sensitive data. Confirm the endpoint, terms and credit balance independently; no cost guarantee is possible.")
+        hosted_fingerprint = hosted_model_provider.configuration_fingerprint()
+        hosted_hash = _hash({"analysis": context_hash, "configuration": hosted_fingerprint})
+        hosted_consent = st.checkbox("I confirmed this hosted endpoint and its charges and consent to send this analysis",
+                                     value=False, key=f"hosted_consent_{hosted_hash}")
+        if st.button("Generate hosted model interpretation", key="hosted_generate_button"):
+            st.session_state["hosted_active"] = False
+            st.session_state["ollama_active"] = False
+            _set_active_report(None)
+            st.session_state.pop("hosted_error", None)
+            try:
+                hosted_context = dict(context)
+                if research_context is not None:
+                    hosted_context["user_supplied_research_context"] = research_context
+                with st.spinner("Requesting the configured hosted model..."):
+                    hosted_wrapper = hosted_model_provider.generate_interpretation(
+                        hosted_context, list(effective_titles), profile=report_profile, confirmed=hosted_consent)
+                if not isinstance(hosted_wrapper, dict) or hosted_wrapper.get("source") != "hosted_model":
+                    raise RuntimeError("The hosted provider returned invalid provenance.")
+                validated = ask_muse.validate_report(hosted_wrapper.get("structured"), list(effective_titles),
+                                                     profile=report_profile, allowed_evidence_ids=hosted_context.get("result_ids"))
+                if validated is None:
+                    raise RuntimeError("Hosted report failed schema or evidence validation.")
+                from ai_guard import check_report_numbers
+                guard = check_report_numbers(validated, hosted_context)
+                if guard["status"] == "contradiction":
+                    raise RuntimeError("Hosted report contradicts computed results or evidence IDs.")
+                hosted_wrapper["structured"] = validated
+                hosted_wrapper["numeric_guard"] = guard
+                hosted_wrapper["evidence_index"] = hosted_context.get("evidence_index", {})
+                hosted_wrapper["analysis_fingerprint"] = hosted_hash
+                hosted_wrapper["validation_status"] = "validated"
+                from datetime import datetime, timezone
+                hosted_wrapper["validated_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                st.session_state["hosted_report"] = {"hash": hosted_hash, "wrapper": hosted_wrapper}
+                st.session_state["hosted_active"] = True
+            except (ValueError, RuntimeError) as exc:
+                # The adapter emits fixed, secret-free messages, never raw provider errors.
+                st.session_state["hosted_error"] = str(exc)
+        if st.session_state.get("hosted_error"):
+            st.error(f"Hosted request unavailable: {st.session_state['hosted_error']}")
+            st.caption("No alternate provider or mock was substituted; deterministic results and exports remain available.")
+        hosted_saved = st.session_state.get("hosted_report") or {}
+        if st.session_state.get("hosted_active") and hosted_saved.get("hash") == hosted_hash:
+            hosted_wrapper = hosted_saved["wrapper"]
+            result["ai"] = hosted_wrapper
+            st.success("Hosted response received and structurally checked; scientific interpretation remains unverified.")
+            st.caption(f"Provider: {hosted_wrapper['provider']}; model: {hosted_wrapper['model']}. "
+                       "A successful response does not verify entitlement, credits or semantic claim support.")
+            st.caption(hosted_wrapper["numeric_guard"]["limitations"])
+            for section in hosted_wrapper["structured"]["sections"]:
+                st.markdown(f"**{section['title']}**")
+                st.text(section["content"])
+            for claim in hosted_wrapper["structured"]["claims"]:
+                st.text(f"Claim (unverified): {claim['claim']}")
+                st.caption(f"Evidence IDs: {', '.join(claim.get('evidence_ids') or [])}. "
+                           f"Limitation: {claim['limitation']}")
+        elif st.session_state.get("hosted_active"):
+            st.caption("Hosted report is stale after an analysis or configuration change; request a new report.")
 
 
 # Optional second dataset remains local and is not included in AI context.
