@@ -19,6 +19,7 @@ from provider_config import (
     BLUESMINDS_KEY_ENV,
     BLUESMINDS_MODEL,
     is_placeholder,
+    redact,
 )
 
 DEFAULT_MODEL = "meta-models/Muse-Glimmer-30B"
@@ -50,7 +51,7 @@ def _config() -> dict:
     except ValueError:
         raise ValueError("LABLENS_BASE_URL must be an HTTPS URL without credentials, query or fragment.") from None
     model = _setting("LABLENS_MODEL", BLUESMINDS_MODEL if mode == "bluesminds" else DEFAULT_MODEL)
-    if key in base or key in model:
+    if key in base or key in model or redact(base) != base or redact(model) != model:
         raise ValueError("Configuration must not place the API key in the URL or model identifier.")
     if not model or is_placeholder(model) or len(model) > 200 or any(ord(c) < 33 or ord(c) > 126 for c in model):
         raise ValueError("LABLENS_MODEL must be a nonempty model identifier.")
@@ -64,11 +65,22 @@ def _config() -> dict:
 
 def configuration_status() -> dict:
     """Configuration-only status; never returns secrets or contacts a server."""
+    mode = _setting("LABLENS_AI_PROVIDER").lower()
+    key_name = BLUESMINDS_KEY_ENV if mode == "bluesminds" else "LABLENS_API_KEY"
+    key = _setting(key_name)
+    key_detected = not is_placeholder(key)
+    model = _setting("LABLENS_MODEL", BLUESMINDS_MODEL if mode == "bluesminds" else DEFAULT_MODEL)
+    model_configured = bool(mode in ("bluesminds", "hosted") and model and not is_placeholder(model)
+                            and len(model) <= 200 and all(33 <= ord(c) <= 126 for c in model)
+                            and not (key_detected and key in model) and redact(model) == model)
     try:
         config = _config()
     except ValueError as exc:
-        return {"configured": False, "model": None, "message": str(exc), "live_verified": False}
-    return {"configured": True, "model": config["model"], "live_verified": False,
+        return {"configured": False, "model": model if model_configured else None,
+                "api_key_detected": key_detected, "model_configured": model_configured,
+                "message": str(exc), "live_verified": False}
+    return {"configured": True, "model": config["model"], "api_key_detected": key_detected,
+            "model_configured": True, "live_verified": False,
             "message": "Configured only; endpoint, entitlement, credits and model access are not verified."}
 
 

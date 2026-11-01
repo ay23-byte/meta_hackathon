@@ -185,6 +185,11 @@ def secret_values() -> list[str]:
     machine cannot leak either one through an exception string.
     """
     values: list[str] = []
+    hosted_key = os.getenv(BLUESMINDS_KEY_ENV)
+    generic_key = os.getenv("LABLENS_API_KEY")
+    for key in (hosted_key, generic_key):
+        if key and not is_placeholder(key):
+            values.append(key.strip())
     raw_process = os.getenv(KEY_ENV)
     if raw_process and raw_process.strip() and not is_placeholder(raw_process):
         values.append(raw_process.strip())
