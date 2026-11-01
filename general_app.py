@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -23,6 +24,7 @@ import pandas as pd
 import streamlit as st
 
 import ask_muse
+import hosted_model_provider
 import provider_config
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
@@ -143,38 +145,68 @@ def step_header(letter: str, title: str, caption: str):
 
 with st.sidebar:
     st.title("LabLens AI")
-    st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
-    provider = ask_muse.provider_status()
-    if provider["api_key_configured"]:
-        st.info(f"Muse Spark key configured. Model: {provider['model']}. "
-                "Live reachability is NOT verified until a report is requested.")
-    else:
-        st.info("Muse Spark key not configured — deterministic analysis, exports and the "
-                "labelled offline MOCK report still work.")
-    with st.expander("Provider status (honest configuration check)"):
-        st.json({key: provider[key] for key in (
-            "provider", "base_url", "model", "api_key_configured", "key_source",
-            "env_file_present", "mode", "live_call_attempted", "live_verified",
-            "offline_mock_available", "max_transient_retries",
-        )})
+    selected_mode = os.environ.get("LABLENS_AI_PROVIDER", "").strip().lower()
+    selected_hosted = selected_mode in ("bluesminds", "hosted")
+    unsupported_provider = bool(selected_mode and not selected_hosted)
+    selected_name = ("Bluesminds Muse Glimmer" if selected_mode == "bluesminds" else
+                     "Hosted model" if selected_hosted else
+                     "Unsupported provider" if unsupported_provider else "Muse Spark")
+    if selected_hosted:
+        provider = hosted_model_provider.configuration_status()
+        provider_fingerprint = hosted_model_provider.configuration_fingerprint()
+        live_state = st.session_state.get("hosted_verification", {})
+        if live_state.get("fingerprint") != provider_fingerprint:
+            live_state = {}
+        st.caption(f"F · Interpret provider: {selected_name}")
+        st.json({"provider": selected_name,
+                 "api_key_detected": provider["api_key_detected"],
+                 "model_configured": provider["model_configured"],
+                 "model": provider["model"],
+                 "live_connectivity_verified_this_session": bool(live_state.get("connectivity")),
+                 "generation_succeeded_this_session": bool(live_state.get("generation"))})
+        st.caption("Session status for the current configuration only. A key or model setting does not prove access; "
+                   "connectivity does not prove report validity, billing, or model identity.")
         st.caption(provider["message"])
-    if st.checkbox("Show optional provider connectivity check", value=False):
-        st.caption("Sends one minimal request without dataset context; it may consume credits. "
-                   "It does not verify structured report generation.")
-        if st.button("Check provider connectivity", key="provider_connectivity"):
-            try:
-                with st.spinner("Checking provider connectivity..."):
-                    ask_muse.check_provider_connectivity()
-            except (RuntimeError, ValueError) as exc:
-                st.session_state["provider_check_result"] = ("failed", _safe_error(exc))
-            else:
-                st.session_state["provider_check_result"] = ("succeeded", "A non-empty response was received. Structured reports were not tested.")
-        check = st.session_state.get("provider_check_result")
-        if check:
-            if check[0] == "succeeded":
-                st.success(f"Connectivity check succeeded: {check[1]}")
-            else:
-                st.error(f"Connectivity check failed: {check[1]}")
+        st.caption("Use the hosted controls below for the explicit, potentially billable connectivity test.")
+    elif unsupported_provider:
+        provider_fingerprint = f"unsupported:{selected_mode}"
+        provider = {"message": "Unsupported LABLENS_AI_PROVIDER; no provider will be called.",
+                    "live_verified": False, "offline_mock_available": True}
+        st.error(provider["message"])
+    else:
+        provider_fingerprint = "legacy:muse_spark"
+        st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
+        provider = ask_muse.provider_status()
+        if provider["api_key_configured"]:
+            st.info(f"Muse Spark key configured. Model: {provider['model']}. "
+                    "Live reachability is NOT verified until a report is requested.")
+        else:
+            st.info("Muse Spark key not configured — deterministic analysis, exports and the "
+                    "labelled offline MOCK report still work.")
+        with st.expander("Provider status (honest configuration check)"):
+            st.json({key: provider[key] for key in (
+                "provider", "base_url", "model", "api_key_configured", "key_source",
+                "env_file_present", "mode", "live_call_attempted", "live_verified",
+                "offline_mock_available", "max_transient_retries",
+            )})
+            st.caption(provider["message"])
+        if st.checkbox("Show optional provider connectivity check", value=False):
+            st.caption("Sends one minimal request without dataset context; it may consume credits. "
+                       "It does not verify structured report generation.")
+            if st.button("Check provider connectivity", key="provider_connectivity"):
+                try:
+                    with st.spinner("Checking provider connectivity..."):
+                        ask_muse.check_provider_connectivity()
+                except (RuntimeError, ValueError) as exc:
+                    st.session_state["provider_check_result"] = ("failed", _safe_error(exc))
+                else:
+                    st.session_state["provider_check_result"] = ("succeeded", "A non-empty response was received. Structured reports were not tested.")
+            check = st.session_state.get("provider_check_result")
+            if check:
+                if check[0] == "succeeded":
+                    st.success(f"Connectivity check succeeded: {check[1]}")
+                else:
+                    st.error(f"Connectivity check failed: {check[1]}")
     st.markdown("**Workflow**")
     for letter, label in (
         ("A", "Upload"), ("B", "Validate / Clean"), ("C", "Configure"),
@@ -684,7 +716,7 @@ if stored_ai_hash != context_hash:
     st.session_state["ai_context_hash"] = context_hash
 else:
     ai_state = st.session_state.get("ai_state")
-    if isinstance(ai_state, dict) and ai_state.get("hash") != context_hash:
+    if isinstance(ai_state, dict) and ai_state.get("hash") != _hash({"analysis": context_hash, "provider": provider_fingerprint}):
         st.session_state.pop("ai_state", None)
 result["ai"] = None
 
@@ -1062,7 +1094,7 @@ with st.expander("Compare with a proposed Ohmic prediction"):
 # F · Interpret (optional AI)
 # ---------------------------------------------------------------------------
 
-step_header("F", "Interpret", "Live Muse Spark is optional. Computed results above are authoritative; "
+step_header("F", "Interpret", f"Selected provider: {selected_name}. Computed results above are authoritative; "
             "AI text and the explicitly labelled offline MOCK are never experimental evidence.")
 st.caption(
     "A live request sends a bounded summary including the question, file and column names, "
@@ -1070,24 +1102,23 @@ st.caption(
     "intentionally sent, but names and free text may contain sensitive information; review "
     "them before requesting AI. No provider request occurs on startup."
 )
-st.caption(f"Provider status: {provider['message']} "
-           f"(live_verified={str(provider['live_verified']).lower()}, "
-           f"mock_available={str(provider['offline_mock_available']).lower()}).")
+st.caption(f"Provider status: {provider['message']}")
 
 
 def _ai_state():
     """Return the current analysis' report state, creating an empty one."""
     state = st.session_state.get("ai_state")
-    if isinstance(state, dict) and state.get("hash") == context_hash:
+    report_state_hash = _hash({"analysis": context_hash, "provider": provider_fingerprint})
+    if isinstance(state, dict) and state.get("hash") == report_state_hash:
         state.setdefault("live", None)
         state.setdefault("mock", None)
         state.setdefault("active", None)
         return state
-    return {"hash": context_hash, "live": None, "mock": None, "active": None}
+    return {"hash": report_state_hash, "live": None, "mock": None, "active": None}
 
 
 def _save_ai_state(state):
-    state["hash"] = context_hash
+    state["hash"] = _hash({"analysis": context_hash, "provider": provider_fingerprint})
     st.session_state["ai_state"] = state
 
 
@@ -1142,7 +1173,7 @@ def _live_request_failed(exc):
     # Keep a stored mock for a later explicit mock click, but do not display it
     # after a failed live request. Nothing is presented as a live response.
     _set_active_report(None)
-    st.error(f"Muse Spark request failed: {message}")
+    st.error(f"{selected_name} request failed: {message}")
     st.info(
         "No live report was produced. Follow the specific error above before retrying; "
         "a retry may consume credits. Deterministic "
@@ -1159,7 +1190,14 @@ def _mock_request_failed(exc):
 def store_validated_report(wrapper, titles, *, kind):
     """Validate and store a report with explicit, action-appropriate provenance."""
     try:
-        wrapper = ask_muse.enforce_report_provenance(wrapper, kind)
+        if kind == "live" and selected_hosted:
+            if (not isinstance(wrapper, dict) or wrapper.get("source") != "hosted_model"
+                    or wrapper.get("is_mock") is not False
+                    or wrapper.get("model") != provider.get("model")
+                    or (selected_mode == "bluesminds" and wrapper.get("provider") != "Bluesminds")):
+                raise RuntimeError("Selected hosted provider returned mismatched provenance.")
+        else:
+            wrapper = ask_muse.enforce_report_provenance(wrapper, kind)
     except (ValueError, RuntimeError) as exc:
         if kind == "live":
             _live_request_failed(exc)
@@ -1199,11 +1237,22 @@ def store_validated_report(wrapper, titles, *, kind):
     state = _ai_state()
     state[kind] = wrapper
     state["active"] = kind
+    if kind == "live" and selected_hosted:
+        st.session_state["hosted_verification"] = {"fingerprint": provider_fingerprint,
+                                                    "connectivity": True, "generation": True}
     _save_ai_state(state)
     st.session_state.pop("ai_last_error", None)
     result["ai"] = wrapper
     st.rerun()
 
+
+hosted_f_consent = False
+if selected_hosted:
+    st.warning("A hosted request sends the analysis summary, names and research context to the configured endpoint; "
+               "it may incur charges. Do not send sensitive data.")
+    hosted_f_consent = st.checkbox(
+        "I confirmed the hosted endpoint and charges and consent to send this analysis from F · Interpret",
+        value=False, key=f"f_hosted_consent_{_hash({'analysis': context_hash, 'provider': provider_fingerprint})}")
 
 regenerate_live = st.checkbox(
     "Regenerate live report on next click", value=False,
@@ -1216,10 +1265,14 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
     # provider request. The in-flight flag prevents duplicate rapid clicks.
     if _current_report("live") and not regenerate_live:
         _set_active_report("live")
-        st.info("A validated live Muse Spark report for this exact analysis is "
+        st.info(f"A validated live {selected_name} report for this exact analysis is "
                 "already available; no duplicate provider request was sent. This is a previously "
                 "validated report, not a new response.")
-    elif not provider_config.get_api_key():
+    elif unsupported_provider:
+        _live_request_failed(ValueError("Unsupported LABLENS_AI_PROVIDER; no provider was called."))
+    elif selected_hosted and not hosted_f_consent:
+        _live_request_failed(ValueError("Explicit hosted consent is required before sending analysis."))
+    elif not selected_hosted and not provider_config.get_api_key():
         if _current_report("mock"):
             st.warning("BASETEN_API_KEY is not set; a labelled OFFLINE MOCK is "
                        "available, but live Muse Spark requires a key. The MOCK "
@@ -1236,19 +1289,29 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         st.session_state["ai_request_in_flight"] = True
         st.session_state.pop("ai_last_error", None)
         try:
-            with st.spinner("Requesting Muse Spark report..."):
+            with st.spinner(f"Requesting {selected_name} report..."):
                 titles = list(effective_titles)
-                if report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
+                if selected_hosted:
+                    hosted_context = dict(context)
+                    if research_context is not None:
+                        hosted_context["user_supplied_research_context"] = research_context
+                    wrapper = hosted_model_provider.generate_interpretation(
+                        hosted_context, titles, profile=report_profile, confirmed=hosted_f_consent)
+                elif report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
                     wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
                 else:
                     wrapper = ask_muse.generate_interpretation(
                         context, section_titles=titles, profile=report_profile
                     )
-                wrapper = ask_muse.enforce_report_provenance(wrapper, "live")
+                if not selected_hosted:
+                    wrapper = ask_muse.enforce_report_provenance(wrapper, "live")
         except (ValueError, RuntimeError) as exc:
             _live_request_failed(exc)
         except Exception as exc:
-            _live_request_failed(exc)
+            if selected_hosted:
+                _live_request_failed(RuntimeError("Unexpected hosted provider failure; no report was stored."))
+            else:
+                _live_request_failed(exc)
         else:
             store_validated_report(wrapper, titles, kind="live")
         finally:
@@ -1302,7 +1365,7 @@ if current_report:
         st.caption(f"Generator: {wrapper.get('model')}. Provider status: "
                    f"{wrapper.get('provider_status')}. No provider request was made.")
     else:
-        st.markdown("### Muse Spark report (AI-generated, unverified)")
+        st.markdown(f"### {selected_name} report (AI-generated, unverified)")
         st.caption(f"Provider provenance: {wrapper.get('source')} "
                    f"(is_mock={str(wrapper.get('is_mock')).lower()}); "
                    f"provider status: {wrapper.get('provider_status')}; "
@@ -1407,8 +1470,6 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
 
 
 with st.expander("Hosted model (explicit configuration and consent)"):
-    import hosted_model_provider
-
     if st.checkbox("Show hosted model controls", value=False):
         hosted_status = hosted_model_provider.configuration_status()
         st.caption("Configuration check only; it does not verify endpoint authenticity, free credits, access or live connectivity.")
@@ -1425,6 +1486,10 @@ with st.expander("Hosted model (explicit configuration and consent)"):
             try:
                 with st.spinner("Testing hosted API connectivity..."):
                     hosted_model_provider.check_connectivity(confirmed=hosted_consent)
+                previous = st.session_state.get("hosted_verification", {})
+                same_config = previous.get("fingerprint") == hosted_fingerprint
+                st.session_state["hosted_verification"] = {"fingerprint": hosted_fingerprint, "connectivity": True,
+                                                            "generation": bool(previous.get("generation")) if same_config else False}
                 st.success("Hosted endpoint returned a nonempty response; model identity and charges remain unverified.")
             except (ValueError, RuntimeError) as exc:
                 st.error(f"Hosted connectivity test unavailable: {exc}")
@@ -1459,6 +1524,8 @@ with st.expander("Hosted model (explicit configuration and consent)"):
                 hosted_wrapper["validated_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 st.session_state["hosted_report"] = {"hash": hosted_hash, "wrapper": hosted_wrapper}
                 st.session_state["hosted_active"] = True
+                st.session_state["hosted_verification"] = {"fingerprint": hosted_fingerprint,
+                                                            "connectivity": True, "generation": True}
             except (ValueError, RuntimeError) as exc:
                 # The adapter emits fixed, secret-free messages, never raw provider errors.
                 st.session_state["hosted_error"] = str(exc)

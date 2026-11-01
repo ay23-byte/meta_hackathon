@@ -284,3 +284,134 @@ def test_bluesminds_connectivity_requires_consent(monkeypatch):
     hosted.check_connectivity(confirmed=True)
     assert len(calls) == 2 and calls[-1][1]["messages"][0]["content"] == "Reply with the word OK."
     assert CONTEXT["result_ids"][0] not in json.dumps(calls[-1][1])
+
+
+def test_f_interpret_routes_bluesminds_with_consent_and_preserves_provenance(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    monkeypatch.setenv("BASETEN_API_KEY", "legacy-unit-key")
+    monkeypatch.setattr(ask_muse, "generate_interpretation", lambda *a, **kw: pytest.fail("legacy provider called"))
+    calls = []
+    captured = {}
+    original = hosted.generate_interpretation
+
+    def capture(context, titles, **kwargs):
+        captured["report"] = ask_muse.generate_mock_report(context, titles, profile=kwargs["profile"])["structured"]
+        return original(context, titles, **kwargs)
+
+    def factory(**kwargs):
+        calls.append(("client", kwargs))
+        def create(**request):
+            calls.append(("request", request))
+            message = SimpleNamespace(content=json.dumps(captured["report"]), reasoning_content="hidden")
+            return SimpleNamespace(model="meta/muse-glimmer-30b", choices=[SimpleNamespace(message=message, finish_reason="stop")])
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(hosted, "generate_interpretation", capture)
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    assert not app.exception
+    assert any("Bluesminds Muse Glimmer" in c.value for c in app.caption)
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not calls and any("consent" in e.value for e in app.error)
+    next(c for c in app.checkbox if c.label.startswith("I confirmed the hosted endpoint and charges and consent to send this analysis from F")).check().run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not app.exception and not app.error
+    assert len(calls) == 2 and calls[0][1]["base_url"] == "https://api.bluesminds.com/v1"
+    req = calls[1][1]
+    assert req["model"] == "meta/muse-glimmer-30b" and req["extra_body"] == {"reasoning_effort": "none"}
+    assert req["temperature"] == 0.2 and req["top_p"] == 1 and req["max_tokens"] == 512
+    assert any("Bluesminds Muse Glimmer report" in x.value for x in app.markdown)
+    assert app.session_state["ai_state"]["live"]["source"] == "hosted_model"
+    assert app.session_state["hosted_verification"]["generation"] is True
+    # A changed model invalidates both cached report and consent.
+    monkeypatch.setenv("LABLENS_MODEL", "changed-model")
+    app.run()
+    assert not next(c for c in app.checkbox if c.label.startswith("I confirmed the hosted endpoint and charges and consent to send this analysis from F")).value
+    assert not any("Bluesminds Muse Glimmer report" in x.value for x in app.markdown)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("case", ["402", "reasoning_only", "missing_key"])
+def test_f_bluesminds_failure_no_legacy_or_mock(monkeypatch, case):
+    configure_bluesminds(monkeypatch)
+    monkeypatch.setenv("BASETEN_API_KEY", "legacy-unit-key")
+    monkeypatch.setattr(ask_muse, "generate_interpretation", lambda *a, **kw: pytest.fail("legacy provider called"))
+    if case == "missing_key":
+        monkeypatch.delenv("BLUESMINDS_API_KEY")
+    calls = []
+    def factory(**kwargs):
+        calls.append(kwargs)
+        def create(**request):
+            if case == "402":
+                err = RuntimeError(SECRET)
+                err.status_code = 402
+                raise err
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content="", reasoning_content="private reasoning"))])
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(c for c in app.checkbox if c.label.startswith("I confirmed the hosted endpoint and charges and consent to send this analysis from F")).check().run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not app.exception
+    errors = " ".join(x.value for x in app.error)
+    assert ("HTTP 402" if case == "402" else "no visible report content" if case == "reasoning_only" else "BLUESMINDS_API_KEY") in errors
+    assert SECRET not in errors and "private reasoning" not in errors
+    assert len(calls) == (0 if case == "missing_key" else 1)
+    assert len(app.get("download_button")) == 3
+    assert not any("OFFLINE MOCK report" in x.value for x in app.markdown)
+
+
+def test_f_unknown_provider_never_falls_back(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "unknown")
+    monkeypatch.setenv("BASETEN_API_KEY", "legacy-unit-key")
+    monkeypatch.setattr(ask_muse, "generate_interpretation", lambda *a, **kw: pytest.fail("legacy provider called"))
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not app.exception and any("Unsupported LABLENS_AI_PROVIDER" in x.value for x in app.error)
+
+
+def test_f_rejects_mismatched_provider_provenance(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    def mismatched(context, titles, *, profile, confirmed):
+        wrapper = ask_muse.generate_mock_report(context, titles, profile=profile)
+        wrapper.update(source="hosted_model", provider="other-provider", model=hosted.BLUESMINDS_MODEL, is_mock=False)
+        return wrapper
+    monkeypatch.setattr(hosted, "generate_interpretation", mismatched)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(c for c in app.checkbox if c.label.startswith("I confirmed the hosted endpoint and charges and consent to send this analysis from F")).check().run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not app.exception and any("mismatched provenance" in e.value for e in app.error)
+    assert not app.session_state.get("hosted_verification", {}).get("generation")
+
+
+def test_hosted_status_separates_model_and_key_without_connection(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "bluesminds")
+    status = hosted.configuration_status()
+    assert status["model"] == "meta/muse-glimmer-30b"
+    assert status["model_configured"] and not status["api_key_detected"] and not status["live_verified"]
+    monkeypatch.setenv("BLUESMINDS_API_KEY", SECRET)
+    status = hosted.configuration_status()
+    assert status["api_key_detected"] and status["model_configured"] and not status["live_verified"]
+    assert SECRET not in json.dumps(status)
+
+
+def test_connectivity_status_is_session_and_configuration_bound(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    calls = fake_client(monkeypatch, content="OK")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(c for c in app.checkbox if c.label == "Show hosted model controls").check().run()
+    next(b for b in app.button if b.label == "Test hosted API connectivity").click().run()
+    assert not calls and any("consent" in e.value for e in app.error)
+    next(c for c in app.checkbox if c.label.startswith("I confirmed this hosted endpoint")).check().run()
+    next(b for b in app.button if b.label == "Test hosted API connectivity").click().run()
+    assert len(calls) == 2
+    assert app.session_state["hosted_verification"]["connectivity"] is True
+    assert app.session_state["hosted_verification"]["generation"] is False
+    app.run()
+    status = json.loads(app.sidebar.json[0].value)
+    assert status["live_connectivity_verified_this_session"] and not status["generation_succeeded_this_session"]
+    monkeypatch.setenv("LABLENS_MODEL", "another-model")
+    app.run()
+    status = json.loads(app.sidebar.json[0].value)
+    assert not status["live_connectivity_verified_this_session"] and not status["generation_succeeded_this_session"]

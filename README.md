@@ -491,8 +491,17 @@ request uses temperature 0.2, top_p 1, and `reasoning_effort=none`. Existing
 Muse Spark and generic hosted modes remain separate. Restart Streamlit after
 changing environment variables.
 
-In **Hosted model (explicit configuration and consent)**, enable controls,
-review the data-sharing and billing warning, and give consent. The optional
+With `LABLENS_AI_PROVIDER=bluesminds`, **F · Interpret** explicitly selects
+Bluesminds rather than Muse Spark. Review the data-sharing and billing warning,
+check the F consent box, then click **Generate evidence-grounded interpretation**.
+The sidebar separately shows key detection, model configuration, session
+connectivity verification and validated generation; none proves billing or model
+identity. Changes to analysis or provider settings invalidate the F consent and
+cached live report. An unset provider retains the legacy Muse Spark workflow.
+An unsupported provider value fails closed rather than switching providers.
+
+Alternatively, in **Hosted model (explicit configuration and consent)**, enable
+controls, review the warning, and give consent. The optional
 **Test hosted API connectivity** button sends one potentially billable short
 completion; report generation sends analysis context. Neither happens on a
 rerun automatically. No automatic retries or provider fallback are made.
@@ -500,7 +509,9 @@ rerun automatically. No automatic retries or provider fallback are made.
 Troubleshooting: a missing-key message means the variable was not set in the
 Streamlit process or contains a placeholder. HTTP 401 means authentication was
 rejected; 402 indicates payment/quota; 429 indicates rate limiting or quota;
-5xx indicates a provider error. Timeouts may require retrying manually after
+5xx indicates a provider error. An HTTP 402 from F while Muse Spark is selected
+is a Baseten response, not evidence about Bluesminds credits. Confirm the
+selected provider in the sidebar. Timeouts may require retrying manually after
 checking service status. Empty or truncated output and invalid reports are
 rejected, not replaced with reasoning or a mock; increasing the token limit
 may help truncation but can increase cost. With no API or a failed request,
