@@ -26,6 +26,9 @@ ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
 BASE_URL = "https://inference.baseten.co/v1"
 DEFAULT_MODEL = "meta-models/muse-spark-open"
+BLUESMINDS_BASE_URL = "https://api.bluesminds.com/v1"
+BLUESMINDS_MODEL = "meta/muse-glimmer-30b"
+BLUESMINDS_KEY_ENV = "BLUESMINDS_API_KEY"
 
 KEY_ENV = "BASETEN_API_KEY"
 MODEL_ENV = "BASETEN_MODEL"

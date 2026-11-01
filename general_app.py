@@ -1420,6 +1420,14 @@ with st.expander("Hosted model (explicit configuration and consent)"):
         hosted_hash = _hash({"analysis": context_hash, "configuration": hosted_fingerprint})
         hosted_consent = st.checkbox("I confirmed this hosted endpoint and its charges and consent to send this analysis",
                                      value=False, key=f"hosted_consent_{hosted_hash}")
+        st.caption("The connectivity test sends one short request and may incur a charge; it does not verify billing or model identity.")
+        if st.button("Test hosted API connectivity", key="hosted_connectivity"):
+            try:
+                with st.spinner("Testing hosted API connectivity..."):
+                    hosted_model_provider.check_connectivity(confirmed=hosted_consent)
+                st.success("Hosted endpoint returned a nonempty response; model identity and charges remain unverified.")
+            except (ValueError, RuntimeError) as exc:
+                st.error(f"Hosted connectivity test unavailable: {exc}")
         if st.button("Generate hosted model interpretation", key="hosted_generate_button"):
             st.session_state["hosted_active"] = False
             st.session_state["ollama_active"] = False

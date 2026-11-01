@@ -460,3 +460,53 @@ variables, user consent, and a button press. It defaults to the requested
 endpoint, model entitlement, free credits, or pricing**. No real hosted request
 has been verified here. See [hosted setup and safety](docs/HOSTED_MODEL_SETUP.md)
 before configuring it. Do not share credentials or sensitive experiment context.
+
+### Bluesminds Muse Glimmer 30B (optional)
+
+Install the project and launch the general app (Python 3.11 or 3.12 recommended):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Obtain a Bluesminds API key from your provider account. Never share it or put it
+in source control. Set the following in the **same PowerShell process** before
+starting Streamlit; this adapter reads process environment only, not `.env`:
+
+```powershell
+$env:LABLENS_AI_PROVIDER = "bluesminds"
+$key = Read-Host "Bluesminds API key" -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key)
+try { $env:BLUESMINDS_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr); Remove-Variable key, ptr }
+.\.venv\Scripts\python.exe -m streamlit run general_app.py
+```
+
+Default endpoint is `https://api.bluesminds.com/v1` and requested model is
+`meta/muse-glimmer-30b`. Optionally override them with `LABLENS_BASE_URL`
+(HTTPS only) and `LABLENS_MODEL`. Set `LABLENS_MAX_OUTPUT_TOKENS` (128–8192,
+default 512) or `LABLENS_TIMEOUT_SECONDS` (5–120, default 60) if needed. The
+request uses temperature 0.2, top_p 1, and `reasoning_effort=none`. Existing
+Muse Spark and generic hosted modes remain separate. Restart Streamlit after
+changing environment variables.
+
+In **Hosted model (explicit configuration and consent)**, enable controls,
+review the data-sharing and billing warning, and give consent. The optional
+**Test hosted API connectivity** button sends one potentially billable short
+completion; report generation sends analysis context. Neither happens on a
+rerun automatically. No automatic retries or provider fallback are made.
+
+Troubleshooting: a missing-key message means the variable was not set in the
+Streamlit process or contains a placeholder. HTTP 401 means authentication was
+rejected; 402 indicates payment/quota; 429 indicates rate limiting or quota;
+5xx indicates a provider error. Timeouts may require retrying manually after
+checking service status. Empty or truncated output and invalid reports are
+rejected, not replaced with reasoning or a mock; increasing the token limit
+may help truncation but can increase cost. With no API or a failed request,
+Python calculations and exports remain available and AI interpretation is
+unavailable. Report validation checks schema and evidence IDs and applies a
+limited numeric guard; it cannot prove scientific claims, all numbers, units
+or semantic support. Review interpretations independently. No live endpoint,
+model access, credits, pricing, or identity have been verified by these tests.
+See [hosted setup](docs/HOSTED_MODEL_SETUP.md).
