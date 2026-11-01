@@ -56,3 +56,15 @@ model identity, credits and report quality are unverified. The configured
 model name in provenance is a **requested identifier**, not independent model
 verification. If an endpoint supplies a different response model identifier,
 the report is rejected rather than mislabelled.
+
+## Bluesminds mode
+
+Set `LABLENS_AI_PROVIDER=bluesminds` and `BLUESMINDS_API_KEY` privately in
+the Streamlit process environment. Defaults are `https://api.bluesminds.com/v1`,
+`meta/muse-glimmer-30b`, and 512 output tokens. `LABLENS_BASE_URL`,
+`LABLENS_MODEL`, `LABLENS_MAX_OUTPUT_TOKENS`, and `LABLENS_TIMEOUT_SECONDS`
+can override these. See README for Windows setup and troubleshooting. This
+mode sends `reasoning_effort=none`, temperature 0.2, and top_p 1. It never
+uses reasoning content as a final answer. No live access is verified.
+The explicit connectivity test sends one potentially billable request without
+analysis data; consent is required. There are no automatic retries.

@@ -19,7 +19,7 @@ CONTEXT = {"result_ids": ["fit.linear"], "evidence_index": {"fit.linear": {"slop
 @pytest.fixture(autouse=True)
 def clear_hosted_env(monkeypatch):
     for key in ("LABLENS_AI_PROVIDER", "LABLENS_API_KEY", "LABLENS_BASE_URL", "LABLENS_MODEL",
-                "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS"):
+                "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", "BLUESMINDS_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -189,3 +189,98 @@ def test_semantic_support_is_explicitly_unverified(monkeypatch):
     assert result["numeric_guard"]["status"] == "partially_checked"
     assert result["numeric_guard"]["unverified"]
     assert "semantic evidence support are not verified" in result["numeric_guard"]["limitations"]
+
+
+def configure_bluesminds(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "bluesminds")
+    monkeypatch.setenv("BLUESMINDS_API_KEY", SECRET)
+
+
+def test_bluesminds_success_and_request_parameters(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    calls = fake_client(monkeypatch, content=json.dumps(report()))
+    result = hosted.generate_interpretation(CONTEXT, confirmed=True)
+    init, request = calls[0][1], calls[1][1]
+    assert init["base_url"] == "https://api.bluesminds.com/v1"
+    assert init["api_key"] == SECRET and init["max_retries"] == 0 and init["timeout"] == 60
+    assert request["model"] == "meta/muse-glimmer-30b"
+    assert request["max_tokens"] == 512 and request["temperature"] == 0.2 and request["top_p"] == 1
+    assert request["extra_body"] == {"reasoning_effort": "none"}
+    assert result["provider"] == "Bluesminds" and SECRET not in json.dumps(result)
+    monkeypatch.setenv("LABLENS_MAX_OUTPUT_TOKENS", "1024")
+    monkeypatch.setenv("LABLENS_MODEL", "custom-model")
+    monkeypatch.setenv("LABLENS_BASE_URL", "https://example.invalid/v1")
+    hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert calls[-1][1]["max_tokens"] == 1024 and calls[-1][1]["model"] == "custom-model"
+    assert calls[-2][1]["base_url"] == "https://example.invalid/v1"
+
+
+def test_bluesminds_reasoning_only_is_not_content(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    def factory(**kwargs):
+        message = SimpleNamespace(content="", reasoning_content="private reasoning")
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw:
+            SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")]))))
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    with pytest.raises(RuntimeError, match="no visible report content") as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert "private reasoning" not in str(error.value)
+
+
+@pytest.mark.parametrize("key", [None, "", "your_bluesminds_api_key_here"])
+def test_bluesminds_missing_key_no_request(monkeypatch, key):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "bluesminds")
+    if key is not None:
+        monkeypatch.setenv("BLUESMINDS_API_KEY", key)
+    calls = fake_client(monkeypatch)
+    with pytest.raises(ValueError, match="BLUESMINDS_API_KEY"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert not calls
+
+
+@pytest.mark.parametrize("status,expected", [(401, "authentication"), (402, "payment"), (429, "rate limit"), (503, "HTTP 503")])
+def test_bluesminds_http_errors(monkeypatch, status, expected):
+    configure_bluesminds(monkeypatch)
+    error = RuntimeError(SECRET)
+    error.status_code = status
+    calls = fake_client(monkeypatch, exc=error)
+    with pytest.raises(RuntimeError, match=expected) as caught:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert SECRET not in str(caught.value) and len(calls) == 2
+
+
+def test_bluesminds_timeout_and_malformed_response(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    calls = fake_client(monkeypatch, exc=TimeoutError(SECRET))
+    with pytest.raises(RuntimeError, match="timed out"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert len(calls) == 2
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kw: SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kw: SimpleNamespace(choices={"bad": "response"})))))
+    with pytest.raises(RuntimeError, match="malformed"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+
+
+def test_bluesminds_evidence_validation(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    candidate = report()
+    candidate["claims"][0]["evidence_ids"] = ["invented.evidence"]
+    fake_client(monkeypatch, content=json.dumps(candidate))
+    with pytest.raises(RuntimeError, match="evidence"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    candidate = report()
+    candidate["sections"][0]["content"] = "slope=999"
+    fake_client(monkeypatch, content=json.dumps(candidate))
+    with pytest.raises(RuntimeError, match="contradicts"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+
+
+def test_bluesminds_connectivity_requires_consent(monkeypatch):
+    configure_bluesminds(monkeypatch)
+    calls = fake_client(monkeypatch, content="OK")
+    with pytest.raises(ValueError, match="consent"):
+        hosted.check_connectivity()
+    assert not calls
+    hosted.check_connectivity(confirmed=True)
+    assert len(calls) == 2 and calls[-1][1]["messages"][0]["content"] == "Reply with the word OK."
+    assert CONTEXT["result_ids"][0] not in json.dumps(calls[-1][1])
