@@ -15,10 +15,11 @@ from openai import OpenAI
 import ask_muse
 from ai_guard import check_report_numbers
 from provider_config import (
-    BLUESMINDS_BASE_URL,
-    BLUESMINDS_KEY_ENV,
-    BLUESMINDS_MODEL,
+    NVIDIA_BASE_URL,
+    NVIDIA_KEY_ENV,
+    NVIDIA_MODEL_ENV,
     is_placeholder,
+    nvidia_setting,
     redact,
 )
 
@@ -32,13 +33,13 @@ def _setting(name: str, default: str = "") -> str:
 
 def _config() -> dict:
     mode = _setting("LABLENS_AI_PROVIDER").lower()
-    if mode not in ("hosted", "bluesminds"):
-        raise ValueError("Set LABLENS_AI_PROVIDER to hosted or bluesminds to enable this provider.")
-    key_name = BLUESMINDS_KEY_ENV if mode == "bluesminds" else "LABLENS_API_KEY"
-    key = _setting(key_name)
+    if mode not in ("hosted", "nvidia"):
+        raise ValueError("Set LABLENS_AI_PROVIDER to hosted or nvidia to enable this provider.")
+    key_name = NVIDIA_KEY_ENV if mode == "nvidia" else "LABLENS_API_KEY"
+    key = nvidia_setting(key_name) if mode == "nvidia" else _setting(key_name)
     if is_placeholder(key):
         raise ValueError(f"{key_name} is missing, blank, or a placeholder.")
-    base = _setting("LABLENS_BASE_URL", BLUESMINDS_BASE_URL if mode == "bluesminds" else "")
+    base = NVIDIA_BASE_URL if mode == "nvidia" else _setting("LABLENS_BASE_URL")
     if not base or is_placeholder(base):
         raise ValueError("LABLENS_BASE_URL is missing or a placeholder; configure the confirmed HTTPS endpoint.")
     try:
@@ -50,12 +51,12 @@ def _config() -> dict:
         _ = parts.port
     except ValueError:
         raise ValueError("LABLENS_BASE_URL must be an HTTPS URL without credentials, query or fragment.") from None
-    model = _setting("LABLENS_MODEL", BLUESMINDS_MODEL if mode == "bluesminds" else DEFAULT_MODEL)
+    model = nvidia_setting(NVIDIA_MODEL_ENV) if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
     if key in base or key in model or redact(base) != base or redact(model) != model:
         raise ValueError("Configuration must not place the API key in the URL or model identifier.")
     if not model or is_placeholder(model) or len(model) > 200 or any(ord(c) < 33 or ord(c) > 126 for c in model):
-        raise ValueError("LABLENS_MODEL must be a nonempty model identifier.")
-    tokens, timeout = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "bluesminds" else "2048"), _setting("LABLENS_TIMEOUT_SECONDS", "60")
+        raise ValueError(f"{NVIDIA_MODEL_ENV if mode == 'nvidia' else 'LABLENS_MODEL'} must be a nonempty model identifier.")
+    tokens, timeout = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "nvidia" else "2048"), _setting("LABLENS_TIMEOUT_SECONDS", "60")
     if not tokens.isascii() or not tokens.isdecimal() or not 128 <= int(tokens) <= 8192:
         raise ValueError("LABLENS_MAX_OUTPUT_TOKENS must be an integer from 128 to 8192.")
     if not timeout.isascii() or not timeout.isdecimal() or not 5 <= int(timeout) <= 120:
@@ -66,11 +67,11 @@ def _config() -> dict:
 def configuration_status() -> dict:
     """Configuration-only status; never returns secrets or contacts a server."""
     mode = _setting("LABLENS_AI_PROVIDER").lower()
-    key_name = BLUESMINDS_KEY_ENV if mode == "bluesminds" else "LABLENS_API_KEY"
-    key = _setting(key_name)
+    key_name = NVIDIA_KEY_ENV if mode == "nvidia" else "LABLENS_API_KEY"
+    key = nvidia_setting(key_name) if mode == "nvidia" else _setting(key_name)
     key_detected = not is_placeholder(key)
-    model = _setting("LABLENS_MODEL", BLUESMINDS_MODEL if mode == "bluesminds" else DEFAULT_MODEL)
-    model_configured = bool(mode in ("bluesminds", "hosted") and model and not is_placeholder(model)
+    model = nvidia_setting(NVIDIA_MODEL_ENV) if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
+    model_configured = bool(mode in ("nvidia", "hosted") and model and not is_placeholder(model)
                             and len(model) <= 200 and all(33 <= ord(c) <= 126 for c in model)
                             and not (key_detected and key in model) and redact(model) == model)
     try:
@@ -87,19 +88,47 @@ def configuration_status() -> dict:
 def configuration_fingerprint() -> str:
     """Bind session cache to configuration changes without storing raw secrets."""
     values = [_setting(name) for name in ("LABLENS_AI_PROVIDER", "LABLENS_MODEL", "LABLENS_API_KEY",
-                                          "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", BLUESMINDS_KEY_ENV)]
+                                          "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS")]
+    values.extend([nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
 
-def _request_content(config: dict, prompt: str) -> str:
+class ModelValidationError(Exception):
+    """Fixed, secret-free catalog validation errors."""
+
+
+def _validate_nvidia_model(client, model: str) -> str:
+    """Validate the exact ID against NVIDIA's available models, without paging implicitly."""
+    try:
+        listing = client.models.list()
+    except Exception as exc:
+        if ask_muse._http_status(exc) in (404, 405):
+            # Listing may be unsupported (or unavailable); do not claim validation.
+            return "unavailable_or_unsupported"
+        raise
+    models = getattr(listing, "data", None)
+    if not isinstance(models, list) or any(not isinstance(getattr(item, "id", None), str) for item in models):
+        raise ModelValidationError("NVIDIA model catalog returned a malformed response; no inference was sent.")
+    if model in {item.id for item in models}:
+        return "verified"
+    if getattr(listing, "has_more", False) or (callable(getattr(listing, "has_next_page", None)) and listing.has_next_page()):
+        raise ModelValidationError("NVIDIA model catalog is paginated; the selected ID could not be verified on the first page; no inference was sent.")
+    raise ModelValidationError("NVIDIA_MODEL was not found in the available model catalog; no inference was sent.")
+
+
+def _request_content(config: dict, prompt: str) -> tuple[str, str]:
     """Single bounded request; never retry automatically or expose provider errors."""
     try:
         client = OpenAI(api_key=config["key"], base_url=config["base"], timeout=config["timeout"], max_retries=0)
         request = {"model": config["model"], "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": config["tokens"], "stream": False}
-        if config["mode"] == "bluesminds":
-            request.update(temperature=0.2, top_p=1, extra_body={"reasoning_effort": "none"})
+        catalog_status = "not_applicable"
+        if config["mode"] == "nvidia":
+            catalog_status = _validate_nvidia_model(client, config["model"])
+            request.update(temperature=0.2, top_p=1)
         response = client.chat.completions.create(**request)
+    except ModelValidationError as exc:
+        raise RuntimeError(str(exc)) from None
     except Exception as exc:
         status = ask_muse._http_status(exc)
         if status in (401, 403):
@@ -130,15 +159,16 @@ def _request_content(config: dict, prompt: str) -> str:
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Hosted provider returned no visible report content.")
-    return content
+    return content, catalog_status
 
 
-def check_connectivity(*, confirmed: bool = False) -> None:
+def check_connectivity(*, confirmed: bool = False) -> str:
     """Explicitly send one potentially billable test completion, without analysis data."""
     if confirmed is not True:
         raise ValueError("Explicit request consent is required before a hosted call.")
     config = _config()
-    _request_content(config, "Reply with the word OK.")
+    _, catalog_status = _request_content(config, "Reply with the word OK.")
+    return catalog_status
 
 
 def generate_interpretation(context: dict, section_titles=None, *, profile=ask_muse.DEFAULT_REPORT_PROFILE,
@@ -164,7 +194,7 @@ def generate_interpretation(context: dict, section_titles=None, *, profile=ask_m
                "conditions, or uncertainty, modify calculated values, or claim unsupported conclusions. "
                "Clearly distinguish hypotheses and missing information. "
                "Do not interpret a slope as resistance unless the user explicitly confirms the Ohmic context and units.")
-    content = _request_content(config, prompt)
+    content, catalog_status = _request_content(config, prompt)
     if config["key"] in content:
         raise RuntimeError("Hosted response contains sensitive credential material and was rejected.")
     structured = ask_muse.validate_report(content, titles, profile=profile, allowed_evidence_ids=context["result_ids"])
@@ -174,6 +204,6 @@ def generate_interpretation(context: dict, section_titles=None, *, profile=ask_m
     if guard["status"] == "contradiction":
         raise RuntimeError("Hosted provider report contradicts computed results or evidence IDs.")
     # Do not use untrusted response metadata as the model identity.
-    return {"source": "hosted_model", "provider": "Bluesminds" if config["mode"] == "bluesminds" else PROVIDER_NAME, "model": config["model"], "is_mock": False,
-            "provider_status": "hosted_response_validated", "model_identity": "configured_identifier_not_independently_verified", "profile": profile,
+    return {"source": "hosted_model", "provider": "NVIDIA NIM" if config["mode"] == "nvidia" else PROVIDER_NAME, "model": config["model"], "is_mock": False,
+            "provider_status": "hosted_response_validated", "model_catalog_status": catalog_status, "model_identity": "configured_identifier_not_independently_verified", "profile": profile,
             "numeric_guard": guard, "evidence_index": context["evidence_index"], "structured": structured}

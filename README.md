@@ -461,63 +461,51 @@ endpoint, model entitlement, free credits, or pricing**. No real hosted request
 has been verified here. See [hosted setup and safety](docs/HOSTED_MODEL_SETUP.md)
 before configuring it. Do not share credentials or sensitive experiment context.
 
-### Bluesminds Muse Glimmer 30B (optional)
+### NVIDIA NIM hosted interpretation (optional)
 
-Install the project and launch the general app (Python 3.11 or 3.12 recommended):
+NVIDIA NIM replaces the previous Bluesminds hosted mode. Existing Muse Spark,
+local Ollama, generic hosted mode, and offline numerical analysis remain separate.
+A stale `LABLENS_AI_PROVIDER=bluesminds` fails closed; it does not select NVIDIA.
+
+Install and run from the project folder (Python 3.11 or 3.12):
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Obtain a Bluesminds API key from your provider account. Never share it or put it
-in source control. Set the following in the **same PowerShell process** before
-starting Streamlit; this adapter reads process environment only, not `.env`:
-
-```powershell
-$env:LABLENS_AI_PROVIDER = "bluesminds"
-$key = Read-Host "Bluesminds API key" -AsSecureString
-$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key)
-try { $env:BLUESMINDS_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
-finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr); Remove-Variable key, ptr }
+$env:LABLENS_AI_PROVIDER = "nvidia"
 .\.venv\Scripts\python.exe -m streamlit run general_app.py
 ```
 
-Default endpoint is `https://api.bluesminds.com/v1` and requested model is
-`meta/muse-glimmer-30b`. Optionally override them with `LABLENS_BASE_URL`
-(HTTPS only) and `LABLENS_MODEL`. Set `LABLENS_MAX_OUTPUT_TOKENS` (128–8192,
-default 512) or `LABLENS_TIMEOUT_SECONDS` (5–120, default 60) if needed. The
-request uses temperature 0.2, top_p 1, and `reasoning_effort=none`. Existing
-Muse Spark and generic hosted modes remain separate. Restart Streamlit after
-changing environment variables.
+Before launch, obtain an NVIDIA API key and choose the **exact model ID** from
+NVIDIA's API Catalog. Set `NVIDIA_API_KEY` and `NVIDIA_MODEL` privately in the
+process environment, or in the external file `F:\meta-hacathon.env` on Windows
+(the file is named `meta-hacathon.env` at the root of drive F, not a `.env`
+inside the repository). On other platforms the fallback is `meta-hacathon.env`
+in the repository's parent directory. Do not commit, print, screenshot or
+share the key. Process environment values override the file, even when blank;
+`LABLENS_DISABLE_DOTENV=1` disables file loading. Restart Streamlit after
+changing process variables. The example file has placeholders only.
 
-With `LABLENS_AI_PROVIDER=bluesminds`, **F · Interpret** explicitly selects
-Bluesminds rather than Muse Spark. Review the data-sharing and billing warning,
-check the F consent box, then click **Generate evidence-grounded interpretation**.
-The sidebar separately shows key detection, model configuration, session
-connectivity verification and validated generation; none proves billing or model
-identity. Changes to analysis or provider settings invalidate the F consent and
-cached live report. An unset provider retains the legacy Muse Spark workflow.
-An unsupported provider value fails closed rather than switching providers.
+`LABLENS_AI_PROVIDER=nvidia` must be set in the process environment. NVIDIA
+uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
+there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
+settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable
+(128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 60.
 
-Alternatively, in **Hosted model (explicit configuration and consent)**, enable
-controls, review the warning, and give consent. The optional
-**Test hosted API connectivity** button sends one potentially billable short
-completion; report generation sends analysis context. Neither happens on a
-rerun automatically. No automatic retries or provider fallback are made.
+F · Interpret uses the selected NVIDIA provider after explicit consent. The
+hosted controls also offer an explicit connectivity test; it sends a short
+potentially billable completion. Before each NVIDIA completion, the app checks
+the selected ID against the provider's `/models` list. If that endpoint returns
+404 or 405 the completion can proceed but catalog status is explicitly marked
+unavailable or unsupported; if the response is malformed, incomplete/paginated
+without a match, or the model is absent, inference is blocked. Other catalog
+errors also block inference. No automatic retries or model/provider fallback are
+made. A catalog listing or completion is not proof of model identity or billing.
 
-Troubleshooting: a missing-key message means the variable was not set in the
-Streamlit process or contains a placeholder. HTTP 401 means authentication was
-rejected; 402 indicates payment/quota; 429 indicates rate limiting or quota;
-5xx indicates a provider error. An HTTP 402 from F while Muse Spark is selected
-is a Baseten response, not evidence about Bluesminds credits. Confirm the
-selected provider in the sidebar. Timeouts may require retrying manually after
-checking service status. Empty or truncated output and invalid reports are
-rejected, not replaced with reasoning or a mock; increasing the token limit
-may help truncation but can increase cost. With no API or a failed request,
-Python calculations and exports remain available and AI interpretation is
-unavailable. Report validation checks schema and evidence IDs and applies a
-limited numeric guard; it cannot prove scientific claims, all numbers, units
-or semantic support. Review interpretations independently. No live endpoint,
-model access, credits, pricing, or identity have been verified by these tests.
-See [hosted setup](docs/HOSTED_MODEL_SETUP.md).
+A missing key or model, 401/403, 402, 429, timeout or 5xx is reported without
+credentials. Check provider access, quota and service status before retrying;
+another request may incur charges. If unavailable, Python calculations and
+exports still work and AI interpretation remains unavailable. Evidence/schema
+validation and limited numeric checks remain in place; they cannot establish
+semantic support or scientific correctness. No real NVIDIA request has been
+verified by the automated tests.
