@@ -30,8 +30,16 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
 NVIDIA_MODEL_ENV = "NVIDIA_MODEL"
 AI_PROVIDER_ENV = "LABLENS_AI_PROVIDER"
-# Explicit Windows location requested by the user; portable sibling equivalent elsewhere.
-NVIDIA_ENV_FILE = Path(r"F:\meta-hacathon\.env") if os.name == "nt" else ROOT.parent / ".env"
+# Use the project file first; retain the previously requested Windows path as
+# an explicit fallback when the project-local file does not exist.
+NVIDIA_ENV_FILE = ENV_FILE
+NVIDIA_LEGACY_ENV_FILE = Path(r"F:\meta-hacathon\.env") if os.name == "nt" else None
+
+
+def _nvidia_env_file() -> Path:
+    if NVIDIA_ENV_FILE == ROOT / ".env" and not NVIDIA_ENV_FILE.is_file() and NVIDIA_LEGACY_ENV_FILE is not None:
+        return NVIDIA_LEGACY_ENV_FILE
+    return NVIDIA_ENV_FILE
 
 KEY_ENV = "BASETEN_API_KEY"
 MODEL_ENV = "BASETEN_MODEL"
@@ -96,9 +104,8 @@ def _process_value(name: str) -> str:
 
 def get_setting(name: str, default: str = "") -> str:
     """Process environment wins; .env is a fallback when not disabled."""
-    process_value = _process_value(name)
-    if process_value:
-        return process_value
+    if name in os.environ:
+        return os.environ[name].strip()
     if dotenv_enabled():
         file_value = _read_dotenv().get(name, "")
         if file_value:
@@ -107,15 +114,15 @@ def get_setting(name: str, default: str = "") -> str:
 
 
 def nvidia_setting(name: str) -> str:
-    """Process environment wins (including blank); otherwise read allowlisted fields from the parent file."""
+    """Process environment wins (including blank); otherwise read the NVIDIA dotenv file."""
     if name not in (NVIDIA_KEY_ENV, NVIDIA_MODEL_ENV):
         raise ValueError("Unsupported NVIDIA setting.")
     if name in os.environ:
         return os.environ[name].strip()
-    if not dotenv_enabled() or not NVIDIA_ENV_FILE.is_file():
+    if not dotenv_enabled() or not _nvidia_env_file().is_file():
         return ""
     try:
-        value = dotenv_values(NVIDIA_ENV_FILE, interpolate=False).get(name)
+        value = dotenv_values(_nvidia_env_file(), interpolate=False).get(name)
         return value.strip() if isinstance(value, str) else ""
     except (OSError, UnicodeError):
         return ""
@@ -125,9 +132,9 @@ def selected_ai_provider() -> str:
     """Select explicitly; a blank configured value fails closed, never selects the legacy provider."""
     if AI_PROVIDER_ENV in os.environ:
         return os.environ[AI_PROVIDER_ENV].strip().lower() or "invalid-empty-provider"
-    if dotenv_enabled() and NVIDIA_ENV_FILE.is_file():
+    if dotenv_enabled() and _nvidia_env_file().is_file():
         try:
-            values = dotenv_values(NVIDIA_ENV_FILE, interpolate=False)
+            values = dotenv_values(_nvidia_env_file(), interpolate=False)
             if AI_PROVIDER_ENV in values:
                 return (values[AI_PROVIDER_ENV] or "").strip().lower() or "invalid-empty-provider"
         except (OSError, UnicodeError):
@@ -137,8 +144,8 @@ def selected_ai_provider() -> str:
 
 def setting_source(name: str) -> str:
     """Human-readable, secret-free origin of a configured setting."""
-    if _process_value(name):
-        return "process environment"
+    if name in os.environ:
+        return "process environment" if _process_value(name) else "none"
     if dotenv_enabled() and _read_dotenv().get(name):
         return ".env (local project file)"
     return "none"
@@ -220,9 +227,9 @@ def secret_values() -> list[str]:
     hosted_key = nvidia_setting(NVIDIA_KEY_ENV)
     generic_key = os.getenv("LABLENS_API_KEY")
     old_hosted_key = os.getenv("BLUESMINDS_API_KEY")  # Redaction only; this provider is no longer selectable.
-    if dotenv_enabled() and NVIDIA_ENV_FILE.is_file():
+    if dotenv_enabled() and _nvidia_env_file().is_file():
         try:
-            file_key = dotenv_values(NVIDIA_ENV_FILE, interpolate=False).get(NVIDIA_KEY_ENV)
+            file_key = dotenv_values(_nvidia_env_file(), interpolate=False).get(NVIDIA_KEY_ENV)
             if file_key and not is_placeholder(file_key):
                 values.append(file_key.strip())
         except (OSError, UnicodeError):

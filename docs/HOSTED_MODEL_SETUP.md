@@ -59,14 +59,14 @@ the report is rejected rather than mislabelled.
 
 ## NVIDIA NIM mode
 
-Select `LABLENS_AI_PROVIDER=nvidia` in the process environment or the parent `.env`. Configure
+Select `LABLENS_AI_PROVIDER=nvidia` in the process environment or the project-local `.env`. Configure
 `NVIDIA_API_KEY` and the exact `NVIDIA_MODEL` from NVIDIA's catalog in the
-process environment or the external file `F:\meta-hacathon\.env` on Windows;
-on other platforms the fallback is `.env` in the repo's parent.
+process environment or that project `.env`. On Windows, the historical
+`F:\meta-hacathon\.env` is used only when the project `.env` does not exist.
 Process values (including blank) take precedence; a blank provider fails closed.
 When no provider is specified, the legacy Muse Spark path remains the default.
 `LABLENS_DISABLE_DOTENV=1`
-disables the external file. The NVIDIA endpoint is fixed to
+disables the file fallback. The NVIDIA endpoint is fixed to
 `https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.
 There is no default model. For the requested integration set `NVIDIA_MODEL` to
 `meta/muse-glimmer-30b`; access and identity remain unverified. Set process

@@ -12,6 +12,9 @@ def test_provider_import_is_offline_and_does_not_load_dotenv_into_environment(tm
     env = os.environ.copy()
     env.pop("BASETEN_API_KEY", None)
     env.pop("BASETEN_MODEL", None)
+    for name in ("NVIDIA_API_KEY", "NVIDIA_MODEL", "LABLENS_AI_PROVIDER",
+                 "LABLENS_API_KEY", "LABLENS_MODEL", "LABLENS_BASE_URL"):
+        env.pop(name, None)
     env.pop("LABLENS_DISABLE_DOTENV", None)
     script = '''
 import os
