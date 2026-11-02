@@ -514,8 +514,9 @@ uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
 there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
 settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable
 (128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 120 for NVIDIA (60 for generic hosted).
-`LABLENS_CONNECT_TIMEOUT_SECONDS` is 1–120 (default 10), and
-`LABLENS_READ_TIMEOUT_SECONDS` is 5–600 (default: the legacy timeout). These
+`LABLENS_CONNECT_TIMEOUT_SECONDS` is 1–120 (default 30 for NVIDIA, 10 for generic hosted), and
+`LABLENS_READ_TIMEOUT_SECONDS` is 5–600 (default 300 for NVIDIA, unless the
+legacy timeout is explicitly set; 60 for generic hosted). These
 are per-operation HTTP timeouts, not an overall deadline. A read timeout also
 limits inactivity while streaming. Non-streaming is the default;
 set `$env:LABLENS_NVIDIA_STREAM = "1"` for streaming or `"0"` for non-streaming.
@@ -529,8 +530,10 @@ the selected ID against the provider's `/models` list. If that endpoint returns
 404 or 405 the completion can proceed but catalog status is explicitly marked
 unavailable or unsupported; if the response is malformed, incomplete/paginated
 without a match, or the model is absent, inference is blocked. Other catalog
-errors also block inference. No automatic retries or model/provider fallback are
-made. A catalog listing or completion is not proof of model identity or billing.
+errors also block inference. `LABLENS_NVIDIA_CATALOG_RETRIES` permits 0–2
+retries (default 0) only for transient failures of the idempotent model-list
+request. Inference itself is never automatically retried, and no model/provider
+fallback is made. A catalog listing or completion is not proof of model identity or billing.
 
 A missing key or model, 401/403, 402, 429, timeout or 5xx is reported without
 credentials. Check provider access, quota and service status before retrying;

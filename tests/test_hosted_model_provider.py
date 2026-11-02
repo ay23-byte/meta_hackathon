@@ -214,7 +214,7 @@ def test_nvidia_success_and_request_parameters(monkeypatch):
     init, request = calls[0][1], calls[1][1]
     assert init["base_url"] == "https://integrate.api.nvidia.com/v1"
     assert init["api_key"] == SECRET and init["max_retries"] == 0
-    assert init["timeout"].connect == 10 and init["timeout"].read == 120
+    assert init["timeout"].connect == 30 and init["timeout"].read == 300
     assert request["model"] == TEST_MODEL
     assert request["max_tokens"] == 512 and request["temperature"] == 0.2 and request["top_p"] == 1
     assert "extra_body" not in request
@@ -748,7 +748,7 @@ def test_timeout_categories_and_safe_diagnostics(monkeypatch, caplog, exception_
     assert len(calls) == 2
     assert SECRET not in str(error.value) and SECRET not in caplog.text
     assert f"timeout_category={expected}" in caplog.text
-    assert "attempt=1" in caplog.text and "completion=failed" in caplog.text
+    assert "inference_attempt=1" in caplog.text and "completion=failed" in caplog.text
 
 
 def test_timeout_configuration_and_fingerprint(monkeypatch):
@@ -791,3 +791,134 @@ def test_stream_read_timeout_closes_and_does_not_retry(monkeypatch):
         hosted.generate_interpretation(CONTEXT, confirmed=True)
     assert len(calls) == 1 and closed == [True]
     assert SECRET not in str(error.value) and "sensitive partial" not in str(error.value)
+
+
+def test_nvidia_catalog_retry_only_for_transient_get(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "1")
+    events = []
+    delays = []
+
+    def catalog():
+        events.append("catalog")
+        if events.count("catalog") == 1:
+            error = RuntimeError(SECRET)
+            error.status_code = 429
+            error.response = SimpleNamespace(headers={"retry-after": "2"})
+            raise error
+        return SimpleNamespace(data=[SimpleNamespace(id=TEST_MODEL)])
+
+    def create(**kwargs):
+        events.append("inference")
+        return SimpleNamespace(model=TEST_MODEL, choices=[SimpleNamespace(
+            finish_reason="stop", message=SimpleNamespace(content=json.dumps(report())))])
+
+    monkeypatch.setattr(hosted.time, "sleep", delays.append)
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kwargs: SimpleNamespace(
+        models=SimpleNamespace(list=catalog), chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    assert hosted.generate_interpretation(CONTEXT, confirmed=True)["model"] == TEST_MODEL
+    assert events == ["catalog", "catalog", "inference"]
+    assert delays == [2.0]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403])
+def test_catalog_does_not_retry_permanent_errors(monkeypatch, status):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "2")
+    calls = []
+    def catalog():
+        calls.append("catalog")
+        exc = RuntimeError(SECRET)
+        exc.status_code = status
+        raise exc
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kw: SimpleNamespace(models=SimpleNamespace(list=catalog)))
+    with pytest.raises(RuntimeError) as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert calls == ["catalog"] and SECRET not in str(error.value)
+
+
+def test_catalog_retry_exhaustion_does_not_start_inference(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "2")
+    calls = []
+    def catalog():
+        calls.append("catalog")
+        exc = RuntimeError(SECRET)
+        exc.status_code = 503
+        raise exc
+    monkeypatch.setattr(hosted.time, "sleep", lambda _: None)
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kw: SimpleNamespace(models=SimpleNamespace(list=catalog)))
+    with pytest.raises(RuntimeError, match="503"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert len(calls) == 3
+
+
+def test_inference_timeout_never_retried_even_if_catalog_retry_enabled(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "2")
+    calls = fake_client(monkeypatch, exc=hosted.httpx.ReadTimeout(SECRET))
+    with pytest.raises(RuntimeError, match="initial response"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert len(calls) == 2
+
+
+def test_stream_inactivity_diagnostics_after_reasoning_chunk(monkeypatch, caplog):
+    import logging
+
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    def chunks():
+        yield _chunk(reasoning="not for logs")
+        raise hosted.httpx.ReadTimeout(SECRET)
+    _stream_client(monkeypatch, chunks())
+    with caplog.at_level(logging.INFO, logger=hosted.__name__):
+        with pytest.raises(RuntimeError, match="stream read"):
+            hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert "stage=stream_read" in caplog.text and "chunks=1" in caplog.text
+    assert "visible_chunks=0" in caplog.text and "first_chunk_s=" in caplog.text
+    assert SECRET not in caplog.text and "not for logs" not in caplog.text
+
+
+def test_smoke_requires_explicit_consent_and_never_calls_provider(monkeypatch, capsys):
+    import nvidia_smoke
+
+    monkeypatch.setattr(hosted, "_request_content", lambda *args: pytest.fail("unexpected network call"))
+    assert nvidia_smoke.main([]) == 2
+    assert "No request sent" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("retry_after", ["invalid", "30", "nan"])
+def test_catalog_never_retries_before_retry_after(monkeypatch, retry_after):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "2")
+    calls = []
+    def catalog():
+        calls.append("catalog")
+        exc = RuntimeError(SECRET)
+        exc.status_code = 429
+        exc.response = SimpleNamespace(headers={"retry-after": retry_after})
+        raise exc
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kw: SimpleNamespace(models=SimpleNamespace(list=catalog)))
+    with pytest.raises(RuntimeError, match="429"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert calls == ["catalog"]
+
+
+def test_catalog_retries_connection_error_and_fingerprint(monkeypatch):
+    configure_nvidia(monkeypatch)
+    before = hosted.configuration_fingerprint()
+    monkeypatch.setenv("LABLENS_NVIDIA_CATALOG_RETRIES", "1")
+    assert hosted.configuration_fingerprint() != before
+    calls = []
+    def catalog():
+        calls.append(1)
+        if len(calls) == 1:
+            raise hosted.httpx.ConnectError(SECRET)
+        return SimpleNamespace(data=[SimpleNamespace(id=TEST_MODEL)])
+    monkeypatch.setattr(hosted.time, "sleep", lambda _: None)
+    monkeypatch.setattr(hosted, "OpenAI", lambda **kw: SimpleNamespace(
+        models=SimpleNamespace(list=catalog), chat=SimpleNamespace(completions=SimpleNamespace(
+            create=lambda **kw: SimpleNamespace(model=TEST_MODEL, choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=json.dumps(report())))])))))
+    assert hosted.generate_interpretation(CONTEXT, confirmed=True)["model"] == TEST_MODEL
+    assert len(calls) == 2
