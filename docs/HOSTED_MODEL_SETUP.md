@@ -61,12 +61,16 @@ the report is rejected rather than mislabelled.
 
 Select `LABLENS_AI_PROVIDER=nvidia` in the process environment. Configure
 `NVIDIA_API_KEY` and the exact `NVIDIA_MODEL` from NVIDIA's catalog in the
-process environment or the external file `F:\meta-hacathon.env` on Windows;
-on other platforms the fallback is `meta-hacathon.env` in the repo's parent.
+process environment or the external file `F:\meta-hacathon\.env` on Windows;
+on other platforms the fallback is `.env` in the repo's parent.
 Process values (including blank) take precedence, and `LABLENS_DISABLE_DOTENV=1`
 disables the external file. The NVIDIA endpoint is fixed to
 `https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.
-There is no default model. See README for setup and model-list validation.
+There is no default model. For the requested integration set `NVIDIA_MODEL` to
+`meta/muse-glimmer-30b`; access and identity remain unverified. Set process
+variable `LABLENS_NVIDIA_STREAM=1` for buffered streaming, or `0` (default)
+for non-streaming. Both paths retain the same report and evidence checks.
+See README for setup and model-list validation.
 
 No NVIDIA live access, model identity or billing has been verified by tests.
 The old Bluesminds mode is no longer selectable; an old selection fails closed.

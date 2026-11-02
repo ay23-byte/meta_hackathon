@@ -476,21 +476,24 @@ $env:LABLENS_AI_PROVIDER = "nvidia"
 .\.venv\Scripts\python.exe -m streamlit run general_app.py
 ```
 
-Before launch, obtain an NVIDIA API key and choose the **exact model ID** from
-NVIDIA's API Catalog. Set `NVIDIA_API_KEY` and `NVIDIA_MODEL` privately in the
-process environment, or in the external file `F:\meta-hacathon.env` on Windows
-(the file is named `meta-hacathon.env` at the root of drive F, not a `.env`
-inside the repository). On other platforms the fallback is `meta-hacathon.env`
-in the repository's parent directory. Do not commit, print, screenshot or
+Before launch, obtain an NVIDIA API key and independently confirm access to
+`meta/muse-glimmer-30b` in NVIDIA's API Catalog. Set `NVIDIA_API_KEY` and
+`NVIDIA_MODEL` privately in the process environment, or in `F:\meta-hacathon\.env`
+on Windows. On other platforms the fallback is `.env` in the repository's parent directory. Do not commit, print, screenshot or
 share the key. Process environment values override the file, even when blank;
 `LABLENS_DISABLE_DOTENV=1` disables file loading. Restart Streamlit after
 changing process variables. The example file has placeholders only.
 
-`LABLENS_AI_PROVIDER=nvidia` must be set in the process environment. NVIDIA
+For the requested model, set `$env:NVIDIA_MODEL = "meta/muse-glimmer-30b"`
+in the same PowerShell process before launching (or set it in the external
+`.env`). `LABLENS_AI_PROVIDER=nvidia` must be set in the process environment. NVIDIA
 uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
 there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
 settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable
-(128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 60.
+(128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 60. Non-streaming is the default;
+set `$env:LABLENS_NVIDIA_STREAM = "1"` for streaming or `"0"` for non-streaming.
+The app buffers the full stream before validation and display; partial text and
+reasoning content are never displayed.
 
 F · Interpret uses the selected NVIDIA provider after explicit consent. The
 hosted controls also offer an explicit connectivity test; it sends a short
