@@ -42,6 +42,22 @@ Both Streamlit scripts are independent, runnable apps. `general_app.py` offers
 the bundled voltage-current sample as one of several example datasets; it does
 not hardcode those column names or units.
 
+### Research workspace interface
+
+The general app's sidebar links navigate to sections of one continuous A–G
+analysis, keeping the existing controls and session state together. The
+highlight follows the last selected section link. The overview describes the
+current dataset, computed fit and provider configuration; it does not imply a
+live provider check or retain a history of past analyses. Use the native sidebar
+control to collapse it on smaller screens. The upload limit is 5 MiB and the
+accepted formats are CSV, TSV and delimited text. The existing report preview
+and CSV, JSON, ZIP and optional PDF exports remain available in Export.
+
+The visual system is centralized in `ui/theme.css`, `ui_components.py` and
+`.streamlit/config.toml`. AI report text is shown only after the existing
+validation; streamed provider responses are buffered, not displayed as partial
+or internal reasoning. Live calls and agent execution remain explicit actions.
+
 ### Quick synthetic demo (no API key or upload)
 
 Run `python -m streamlit run general_app.py`, then choose
