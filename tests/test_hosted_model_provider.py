@@ -367,6 +367,7 @@ def test_f_nvidia_failure_no_legacy_or_mock(monkeypatch, case):
     assert not app.exception
     errors = " ".join(x.value for x in app.error)
     assert ("HTTP 402" if case == "402" else "no visible report content" if case == "reasoning_only" else "NVIDIA_API_KEY") in errors
+    assert "NVIDIA NIM request failed" in errors and "Muse Spark request failed" not in errors
     assert SECRET not in errors and "private reasoning" not in errors
     assert len(calls) == (0 if case == "missing_key" else 1)
     assert len(app.get("download_button")) == 3
@@ -616,3 +617,90 @@ def test_nvidia_stream_rejects_invalid_evidence(monkeypatch):
     _stream_client(monkeypatch, [_chunk(json.dumps(candidate), reason="stop")])
     with pytest.raises(RuntimeError, match="evidence"):
         hosted.generate_interpretation(CONTEXT, confirmed=True)
+
+
+@pytest.mark.parametrize("stream", ["0", "1"])
+def test_parent_env_selects_nvidia_for_f_interpret(monkeypatch, tmp_path, stream):
+    import provider_config
+
+    model = "meta/muse-glimmer-30b"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"LABLENS_AI_PROVIDER=nvidia\nNVIDIA_API_KEY={SECRET}\nNVIDIA_MODEL={model}\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", env_file)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV", raising=False)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", stream)
+    monkeypatch.setenv("BASETEN_API_KEY", "legacy-private-unit-key")
+    monkeypatch.setattr(ask_muse, "generate_interpretation", lambda *a, **kw: pytest.fail("Baseten was called"))
+    calls = []
+    captured = {}
+    original = hosted.generate_interpretation
+    def capture(context, titles, **kwargs):
+        captured["response"] = json.dumps(ask_muse.generate_mock_report(context, titles, profile=kwargs["profile"])["structured"])
+        return original(context, titles, **kwargs)
+    def client_factory(**kwargs):
+        calls.append(("client", kwargs))
+        def create(**request):
+            calls.append(("request", request))
+            if stream == "1":
+                content = captured["response"]
+                return iter([_chunk(reasoning="hidden", model=model), _chunk(content[:50], model=model),
+                             _chunk(content[50:], model=model, reason="stop")])
+            return SimpleNamespace(model=model, choices=[SimpleNamespace(finish_reason="stop",
+                message=SimpleNamespace(content=captured["response"], reasoning_content="hidden"))])
+        return SimpleNamespace(models=SimpleNamespace(list=lambda: SimpleNamespace(data=[SimpleNamespace(id=model)])),
+                               chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(hosted, "generate_interpretation", capture)
+    monkeypatch.setattr(hosted, "OpenAI", client_factory)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    assert not app.exception and any("NVIDIA NIM" in item.value and model in item.value for item in app.caption)
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not calls and any("consent" in item.value for item in app.error)
+    next(c for c in app.checkbox if c.label.startswith("I confirmed the hosted endpoint and charges and consent to send this analysis from F")).check().run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not app.exception and not app.error and len(calls) == 2
+    assert calls[0][1]["api_key"] == SECRET and calls[0][1]["base_url"] == "https://integrate.api.nvidia.com/v1"
+    assert calls[0][1]["max_retries"] == 0 and calls[1][1]["model"] == model
+    assert calls[1][1]["stream"] == (stream == "1")
+    assert app.session_state["ai_state"]["live"]["provider"] == "NVIDIA NIM"
+    assert SECRET not in " ".join(e.value for e in app.error)
+
+
+def test_provider_selection_process_precedence_and_file_fingerprint(monkeypatch, tmp_path):
+    import provider_config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"LABLENS_AI_PROVIDER=nvidia\nNVIDIA_API_KEY={SECRET}\nNVIDIA_MODEL=meta/muse-glimmer-30b\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", env_file)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV", raising=False)
+    assert provider_config.selected_ai_provider() == "nvidia"
+    fingerprint = hosted.configuration_fingerprint()
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "unsupported-provider")
+    assert provider_config.selected_ai_provider() == "unsupported-provider"
+    assert hosted.configuration_fingerprint() != fingerprint
+    with pytest.raises(ValueError, match="hosted or nvidia"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "")
+    assert provider_config.selected_ai_provider() == "invalid-empty-provider"
+    with pytest.raises(ValueError, match="hosted or nvidia"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    monkeypatch.delenv("LABLENS_AI_PROVIDER")
+    env_file.write_text("LABLENS_AI_PROVIDER=unknown\n", encoding="utf-8")
+    assert provider_config.selected_ai_provider() == "unknown"
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    assert provider_config.selected_ai_provider() == ""
+
+
+def test_provider_change_clears_stale_error_without_call(monkeypatch, tmp_path):
+    import provider_config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("LABLENS_AI_PROVIDER=nvidia\nNVIDIA_MODEL=meta/muse-glimmer-30b\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", env_file)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV", raising=False)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "general_app.py"), default_timeout=180).run()
+    next(b for b in app.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert app.session_state["ai_last_error"]
+    env_file.write_text("LABLENS_AI_PROVIDER=unknown\n", encoding="utf-8")
+    app.run()
+    assert not app.session_state.get("ai_last_error") and not app.exception
+    assert any("Unsupported LABLENS_AI_PROVIDER" in e.value for e in app.error)
