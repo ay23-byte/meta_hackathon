@@ -70,8 +70,8 @@ When no provider is specified, the legacy Muse Spark path remains the default.
 `LABLENS_DISABLE_DOTENV=1`
 disables the file fallback. The NVIDIA endpoint is fixed to
 `https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.
-There is no default model. For the requested integration set `NVIDIA_MODEL` to
-`meta/muse-glimmer-30b`; access and identity remain unverified. Set process
+The default model is `meta/muse-glimmer-30b`; `NVIDIA_MODEL` may override it,
+while an explicitly blank value fails closed. Access and identity remain unverified. Set process
 variable `LABLENS_NVIDIA_STREAM=1` for buffered streaming, or `0` (default)
 for non-streaming. Both paths retain the same report and evidence checks.
 See README for setup and model-list validation.

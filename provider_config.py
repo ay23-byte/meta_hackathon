@@ -29,17 +29,23 @@ DEFAULT_MODEL = "meta-models/muse-spark-open"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
 NVIDIA_MODEL_ENV = "NVIDIA_MODEL"
+NVIDIA_DEFAULT_MODEL = "meta/muse-glimmer-30b"
 AI_PROVIDER_ENV = "LABLENS_AI_PROVIDER"
 # Use the project file first; retain the previously requested Windows path as
 # an explicit fallback when the project-local file does not exist.
-NVIDIA_ENV_FILE = ENV_FILE
+NVIDIA_ENV_FILE: Path | None = None
 NVIDIA_LEGACY_ENV_FILE = Path(r"F:\meta-hacathon\.env") if os.name == "nt" else None
 
 
 def _nvidia_env_file() -> Path:
-    if NVIDIA_ENV_FILE == ROOT / ".env" and not NVIDIA_ENV_FILE.is_file() and NVIDIA_LEGACY_ENV_FILE is not None:
+    """Choose one file; an explicit override never falls back to another file."""
+    if NVIDIA_ENV_FILE is not None:
+        return Path(NVIDIA_ENV_FILE)
+    path = Path(ENV_FILE)
+    if path == ROOT / ".env" and not path.is_file() and NVIDIA_LEGACY_ENV_FILE is not None:
         return NVIDIA_LEGACY_ENV_FILE
-    return NVIDIA_ENV_FILE
+    return path
+
 
 KEY_ENV = "BASETEN_API_KEY"
 MODEL_ENV = "BASETEN_MODEL"
@@ -63,7 +69,7 @@ _PLACEHOLDER_PREFIXES = (
 )
 
 _file_values: dict[str, str] | None = None
-_file_values_path: Path | None = None
+_file_values_signature: tuple | None = None
 
 
 def dotenv_enabled() -> bool:
@@ -72,28 +78,31 @@ def dotenv_enabled() -> bool:
 
 
 def reload_dotenv() -> None:
-    """Forget cached .env values (useful after a test creates a temp .env)."""
-    global _file_values, _file_values_path
+    """Forget every cached value and file signature."""
+    global _file_values, _file_values_signature
     _file_values = None
-    _file_values_path = None
+    _file_values_signature = None
 
 
 def _read_dotenv() -> dict[str, str]:
-    """Read .env without mutating os.environ; cache by resolved file path."""
-    global _file_values, _file_values_path
-    if _file_values is None or _file_values_path != ENV_FILE:
-        if not ENV_FILE.is_file():
+    """Read one selected file, without environment mutation or interpolation."""
+    global _file_values, _file_values_signature
+    if not dotenv_enabled():
+        return {}
+    path = _nvidia_env_file()
+    try:
+        stat = path.stat()
+        signature = (path, stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    except OSError:
+        signature = (path, None)
+    if _file_values is None or _file_values_signature != signature:
+        try:
+            _file_values = {str(key): (value.strip() if isinstance(value, str) else "")
+                            for key, value in dotenv_values(path, interpolate=False).items()
+                            if isinstance(key, str)}
+        except (OSError, UnicodeError):
             _file_values = {}
-        else:
-            try:
-                _file_values = {
-                    str(key): value.strip()
-                    for key, value in dotenv_values(ENV_FILE).items()
-                    if isinstance(key, str) and isinstance(value, str) and value.strip()
-                }
-            except Exception:  # pragma: no cover - unreadable/odd .env file
-                _file_values = {}
-        _file_values_path = ENV_FILE
+        _file_values_signature = signature
     return _file_values
 
 
@@ -119,26 +128,24 @@ def nvidia_setting(name: str) -> str:
         raise ValueError("Unsupported NVIDIA setting.")
     if name in os.environ:
         return os.environ[name].strip()
-    if not dotenv_enabled() or not _nvidia_env_file().is_file():
-        return ""
-    try:
-        value = dotenv_values(_nvidia_env_file(), interpolate=False).get(name)
-        return value.strip() if isinstance(value, str) else ""
-    except (OSError, UnicodeError):
-        return ""
+    return _read_dotenv().get(name, "")
+
+
+def get_nvidia_model() -> str:
+    """Use the documented model only when no override was supplied at all."""
+    if NVIDIA_MODEL_ENV in os.environ:
+        return os.environ[NVIDIA_MODEL_ENV].strip()
+    values = _read_dotenv()
+    return values[NVIDIA_MODEL_ENV] if NVIDIA_MODEL_ENV in values else NVIDIA_DEFAULT_MODEL
 
 
 def selected_ai_provider() -> str:
-    """Select explicitly; a blank configured value fails closed, never selects the legacy provider."""
+    """An explicitly blank provider fails closed; no network access occurs here."""
     if AI_PROVIDER_ENV in os.environ:
         return os.environ[AI_PROVIDER_ENV].strip().lower() or "invalid-empty-provider"
-    if dotenv_enabled() and _nvidia_env_file().is_file():
-        try:
-            values = dotenv_values(_nvidia_env_file(), interpolate=False)
-            if AI_PROVIDER_ENV in values:
-                return (values[AI_PROVIDER_ENV] or "").strip().lower() or "invalid-empty-provider"
-        except (OSError, UnicodeError):
-            return "invalid-unreadable-provider-file"
+    values = _read_dotenv()
+    if AI_PROVIDER_ENV in values:
+        return values[AI_PROVIDER_ENV].strip().lower() or "invalid-empty-provider"
     return ""
 
 
@@ -179,7 +186,7 @@ def api_key_status() -> dict:
     """
     key = get_setting(KEY_ENV)
     source = setting_source(KEY_ENV)
-    env_file_present = ENV_FILE.is_file()
+    env_file_present = _nvidia_env_file().is_file() if dotenv_enabled() else False
     if not key:
         return {
             "present": False, "state": "missing", "key": None,
@@ -224,25 +231,13 @@ def secret_values() -> list[str]:
     machine cannot leak either one through an exception string.
     """
     values: list[str] = []
-    hosted_key = nvidia_setting(NVIDIA_KEY_ENV)
-    generic_key = os.getenv("LABLENS_API_KEY")
-    old_hosted_key = os.getenv("BLUESMINDS_API_KEY")  # Redaction only; this provider is no longer selectable.
-    if dotenv_enabled() and _nvidia_env_file().is_file():
-        try:
-            file_key = dotenv_values(_nvidia_env_file(), interpolate=False).get(NVIDIA_KEY_ENV)
-            if file_key and not is_placeholder(file_key):
-                values.append(file_key.strip())
-        except (OSError, UnicodeError):
-            pass
-    for key in (hosted_key, generic_key, old_hosted_key):
-        if key and not is_placeholder(key):
-            values.append(key.strip())
-    raw_process = os.getenv(KEY_ENV)
-    if raw_process and raw_process.strip() and not is_placeholder(raw_process):
-        values.append(raw_process.strip())
-    file_value = _read_dotenv().get(KEY_ENV, "")
-    if file_value and not is_placeholder(file_value):
-        values.append(file_value)
+    for name in (NVIDIA_KEY_ENV, KEY_ENV, "LABLENS_API_KEY", "BLUESMINDS_API_KEY"):
+        process_key = os.getenv(name)
+        if process_key and not is_placeholder(process_key):
+            values.append(process_key.strip())
+        file_key = _read_dotenv().get(name, "")
+        if file_key and not is_placeholder(file_key):
+            values.append(file_key)
     return list(dict.fromkeys(values))
 
 

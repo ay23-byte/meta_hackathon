@@ -431,10 +431,12 @@ def test_connectivity_status_is_session_and_configuration_bound(monkeypatch):
     assert not status["live_connectivity_verified_this_session"] and not status["generation_succeeded_this_session"]
 
 
-def test_nvidia_requires_explicit_model_and_never_uses_legacy_override(monkeypatch):
+def test_nvidia_default_model_and_never_uses_legacy_override(monkeypatch):
     configure_nvidia(monkeypatch)
     monkeypatch.delenv("NVIDIA_MODEL")
     monkeypatch.setenv("LABLENS_MODEL", "legacy-unrelated-model")
+    assert hosted.configuration_status()["model"] == "meta/muse-glimmer-30b"
+    monkeypatch.setenv("NVIDIA_MODEL", "")
     calls = fake_client(monkeypatch)
     with pytest.raises(ValueError, match="NVIDIA_MODEL"):
         hosted.generate_interpretation(CONTEXT, confirmed=True)
@@ -727,7 +729,8 @@ def test_nvidia_project_dotenv_and_process_precedence(monkeypatch, tmp_path):
     assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
     monkeypatch.delenv("NVIDIA_API_KEY")
     project.unlink()
-    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "unit-legacy-secret"
+    # An explicitly selected (now absent) file must not fall back to legacy.
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
     assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
 

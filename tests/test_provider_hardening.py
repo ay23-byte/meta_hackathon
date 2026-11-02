@@ -146,12 +146,12 @@ def test_process_env_wins_and_disable_flag_blocks_local_dotenv(tmp_path, monkeyp
         assert provider_config.get_api_key() is None
         assert ask_muse.provider_status()["api_key_configured"] is False
 
-        # Redaction covers both a process-env secret and a local .env secret,
-        # even when .env fallback is disabled for configuration lookup.
+        # Disabled dotenv must not be read even by redaction.
         monkeypatch.setenv("BASETEN_API_KEY", FAKE_KEY)
         redacted = provider_config.redact(f"{FAKE_KEY} and {FILE_KEY}")
-        assert FAKE_KEY not in redacted and FILE_KEY not in redacted
-        assert "[redacted]" in redacted
+        assert FAKE_KEY not in redacted and FILE_KEY in redacted
+        monkeypatch.delenv("LABLENS_DISABLE_DOTENV")
+        assert FILE_KEY not in provider_config.redact(FILE_KEY)
     finally:
         provider_config.reload_dotenv()
 
@@ -337,3 +337,32 @@ def test_blank_process_key_blocks_dotenv_fallback(tmp_path, monkeypatch):
         assert provider_config.setting_source("BASETEN_API_KEY") == "none"
     finally:
         provider_config.reload_dotenv()
+
+
+def test_selected_dotenv_override_and_cache_invalidation(tmp_path, monkeypatch):
+    local = tmp_path / "local.env"
+    other = tmp_path / "selected.env"
+    local.write_text("NVIDIA_API_KEY=local-fake-key\n", encoding="utf-8")
+    other.write_text("NVIDIA_API_KEY=selected-fake-key\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "ENV_FILE", local)
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", other)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "selected-fake-key"
+    other.write_text("NVIDIA_API_KEY=rotated-fake-key-value\n", encoding="utf-8")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "rotated-fake-key-value"
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", tmp_path / "absent.env")
+    assert not provider_config.nvidia_setting("NVIDIA_API_KEY")
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", None)
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "local-fake-key"
+    assert "NVIDIA_API_KEY" not in os.environ
+
+
+def test_disabled_dotenv_never_reads_selected_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(provider_config, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    monkeypatch.setattr(provider_config, "dotenv_values", lambda *a, **kw: pytest.fail("dotenv read while disabled"))
+    provider_config.reload_dotenv()
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
+    assert provider_config.get_api_key() is None
+    assert provider_config.selected_ai_provider() == ""
+    assert provider_config.redact("safe message") == "safe message"
