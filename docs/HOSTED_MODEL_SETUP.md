@@ -19,7 +19,9 @@ or logs. Set them privately in the same terminal/process that starts Streamlit.
 | `LABLENS_BASE_URL` | Confirmed OpenAI-compatible HTTPS base URL; no default. No URL credentials, query or fragment. |
 | `LABLENS_MODEL` | Optional confirmed model ID; default `meta-models/Muse-Glimmer-30B`. Explicitly blank is rejected. |
 | `LABLENS_MAX_OUTPUT_TOKENS` | Optional integer 128–8192; default 2048. |
-| `LABLENS_TIMEOUT_SECONDS` | Optional integer 5–120; default 60. |
+| `LABLENS_TIMEOUT_SECONDS` | Optional integer 5–120; default 60 (120 for NVIDIA); write/pool and default read timeout. |
+| `LABLENS_CONNECT_TIMEOUT_SECONDS` | Optional integer 1–120; default 10. |
+| `LABLENS_READ_TIMEOUT_SECONDS` | Optional integer 5–600; default is `LABLENS_TIMEOUT_SECONDS`. Bounds read/stream inactivity, not total elapsed time. |
 
 Use your OS's secret-management method to set the key in the process environment;
 configure the other values from your provider's instructions. Do not use the

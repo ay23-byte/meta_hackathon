@@ -213,7 +213,8 @@ def test_nvidia_success_and_request_parameters(monkeypatch):
     result = hosted.generate_interpretation(CONTEXT, confirmed=True)
     init, request = calls[0][1], calls[1][1]
     assert init["base_url"] == "https://integrate.api.nvidia.com/v1"
-    assert init["api_key"] == SECRET and init["max_retries"] == 0 and init["timeout"] == 60
+    assert init["api_key"] == SECRET and init["max_retries"] == 0
+    assert init["timeout"].connect == 10 and init["timeout"].read == 120
     assert request["model"] == TEST_MODEL
     assert request["max_tokens"] == 512 and request["temperature"] == 0.2 and request["top_p"] == 1
     assert "extra_body" not in request
@@ -729,3 +730,64 @@ def test_nvidia_project_dotenv_and_process_precedence(monkeypatch, tmp_path):
     assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "unit-legacy-secret"
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
     assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
+
+
+@pytest.mark.parametrize("exception_type, expected", [
+    (hosted.httpx.ConnectTimeout, "connection"),
+    (hosted.httpx.ReadTimeout, "read"),
+    (hosted.httpx.WriteTimeout, "write"),
+])
+def test_timeout_categories_and_safe_diagnostics(monkeypatch, caplog, exception_type, expected):
+    import logging
+
+    configure_nvidia(monkeypatch)
+    calls = fake_client(monkeypatch, exc=exception_type(SECRET))
+    with caplog.at_level(logging.INFO, logger=hosted.__name__):
+        with pytest.raises(RuntimeError, match=expected) as error:
+            hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert len(calls) == 2
+    assert SECRET not in str(error.value) and SECRET not in caplog.text
+    assert f"timeout_category={expected}" in caplog.text
+    assert "attempt=1" in caplog.text and "completion=failed" in caplog.text
+
+
+def test_timeout_configuration_and_fingerprint(monkeypatch):
+    configure_nvidia(monkeypatch)
+    old = hosted.configuration_fingerprint()
+    monkeypatch.setenv("LABLENS_CONNECT_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("LABLENS_READ_TIMEOUT_SECONDS", "240")
+    calls = fake_client(monkeypatch, content=json.dumps(report()))
+    hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert calls[0][1]["timeout"].connect == 7
+    assert calls[0][1]["timeout"].read == 240
+    assert old != hosted.configuration_fingerprint()
+    monkeypatch.setenv("LABLENS_READ_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValueError, match="LABLENS_READ_TIMEOUT_SECONDS"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+
+
+def test_stream_read_timeout_closes_and_does_not_retry(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    closed = []
+    calls = []
+
+    class PartialStream:
+        def __iter__(self):
+            yield _chunk("sensitive partial")
+            raise hosted.httpx.ReadTimeout(SECRET)
+
+        def close(self):
+            closed.append(True)
+
+    def factory(**kwargs):
+        def create(**request):
+            calls.append(request)
+            return PartialStream()
+        return SimpleNamespace(models=fake_catalog(), chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    with pytest.raises(RuntimeError, match="stream inactivity or read") as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert len(calls) == 1 and closed == [True]
+    assert SECRET not in str(error.value) and "sensitive partial" not in str(error.value)

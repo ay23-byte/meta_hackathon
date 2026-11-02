@@ -7,10 +7,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import time
+from importlib.metadata import version
 from urllib.parse import urlsplit
 
 from openai import OpenAI
+
+# SDK 3 uses httpx2; SDK 1/2 use httpx. Supply the timeout type expected
+# by the installed SDK rather than adding an incompatible second transport.
+if int(version("openai").split(".")[0]) >= 3:
+    import httpx2 as httpx
+else:
+    import httpx
 
 import ask_muse
 from ai_guard import check_report_numbers
@@ -26,6 +36,7 @@ from provider_config import (
 
 DEFAULT_MODEL = "meta-models/Muse-Glimmer-30B"
 PROVIDER_NAME = "User-configured hosted OpenAI-compatible provider"
+LOGGER = logging.getLogger(__name__)
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -57,16 +68,23 @@ def _config() -> dict:
         raise ValueError("Configuration must not place the API key in the URL or model identifier.")
     if not model or is_placeholder(model) or len(model) > 200 or any(ord(c) < 33 or ord(c) > 126 for c in model):
         raise ValueError(f"{NVIDIA_MODEL_ENV if mode == 'nvidia' else 'LABLENS_MODEL'} must be a nonempty model identifier.")
-    tokens, timeout = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "nvidia" else "2048"), _setting("LABLENS_TIMEOUT_SECONDS", "60")
+    tokens = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "nvidia" else "2048")
+    timeout = _setting("LABLENS_TIMEOUT_SECONDS", "120" if mode == "nvidia" else "60")
+    connect_timeout = _setting("LABLENS_CONNECT_TIMEOUT_SECONDS", "10")
+    read_timeout = _setting("LABLENS_READ_TIMEOUT_SECONDS", timeout)
     if not tokens.isascii() or not tokens.isdecimal() or not 128 <= int(tokens) <= 8192:
         raise ValueError("LABLENS_MAX_OUTPUT_TOKENS must be an integer from 128 to 8192.")
     if not timeout.isascii() or not timeout.isdecimal() or not 5 <= int(timeout) <= 120:
         raise ValueError("LABLENS_TIMEOUT_SECONDS must be an integer from 5 to 120.")
+    if not connect_timeout.isascii() or not connect_timeout.isdecimal() or not 1 <= int(connect_timeout) <= 120:
+        raise ValueError("LABLENS_CONNECT_TIMEOUT_SECONDS must be an integer from 1 to 120.")
+    if not read_timeout.isascii() or not read_timeout.isdecimal() or not 5 <= int(read_timeout) <= 600:
+        raise ValueError("LABLENS_READ_TIMEOUT_SECONDS must be an integer from 5 to 600.")
     streaming = _setting("LABLENS_NVIDIA_STREAM", "0") if mode == "nvidia" else "0"
     if streaming not in ("0", "1"):
         raise ValueError("LABLENS_NVIDIA_STREAM must be 0 or 1.")
     return {"key": key, "base": base, "model": model, "tokens": int(tokens), "timeout": int(timeout), "mode": mode,
-            "stream": streaming == "1"}
+            "connect_timeout": int(connect_timeout), "read_timeout": int(read_timeout), "stream": streaming == "1"}
 
 
 def configuration_status() -> dict:
@@ -93,7 +111,8 @@ def configuration_status() -> dict:
 def configuration_fingerprint() -> str:
     """Bind session cache to configuration changes without storing raw secrets."""
     values = [_setting(name) for name in ("LABLENS_AI_PROVIDER", "LABLENS_MODEL", "LABLENS_API_KEY",
-                                          "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM")]
+                                          "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS",
+                                          "LABLENS_CONNECT_TIMEOUT_SECONDS", "LABLENS_READ_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM")]
     values.extend([selected_ai_provider(), nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
@@ -173,10 +192,36 @@ def _collect_stream(response, model: str) -> str:
     return content
 
 
+def _timeout_category(exc: Exception) -> str | None:
+    """Inspect SDK exception causes without exposing provider error messages."""
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, httpx.ConnectTimeout):
+            return "connection"
+        if isinstance(current, httpx.ReadTimeout):
+            return "read"
+        if isinstance(current, httpx.WriteTimeout):
+            return "write"
+        if isinstance(current, httpx.PoolTimeout):
+            return "connection pool"
+        current = current.__cause__ or current.__context__
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+        return "unknown phase"
+    return None
+
+
 def _request_content(config: dict, prompt: str) -> tuple[str, str]:
     """Single bounded request; never retry automatically or expose provider errors."""
+    started = time.monotonic()
+    client = None
+    category = "none"
+    status = None
+    outcome = "failed"
     try:
-        client = OpenAI(api_key=config["key"], base_url=config["base"], timeout=config["timeout"], max_retries=0)
+        timeout = httpx.Timeout(config["timeout"], connect=config["connect_timeout"], read=config["read_timeout"])
+        client = OpenAI(api_key=config["key"], base_url=config["base"], timeout=timeout, max_retries=0)
         request = {"model": config["model"], "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": config["tokens"], "stream": config["stream"]}
         catalog_status = "not_applicable"
@@ -185,7 +230,10 @@ def _request_content(config: dict, prompt: str) -> tuple[str, str]:
             request.update(temperature=0.2, top_p=1)
         response = client.chat.completions.create(**request)
         if config["stream"]:
-            return _collect_stream(response, config["model"]), catalog_status
+            content = _collect_stream(response, config["model"])
+            outcome = "stream_complete"
+            return content, catalog_status
+        outcome = "response_received"
     except (ModelValidationError, StreamResponseError) as exc:
         raise RuntimeError(str(exc)) from None
     except Exception as exc:
@@ -198,9 +246,21 @@ def _request_content(config: dict, prompt: str) -> tuple[str, str]:
             raise RuntimeError("Hosted provider rate limit or quota reached (HTTP 429); no retry was made.") from None
         if status is not None:
             raise RuntimeError(f"Hosted provider returned HTTP {status}; no retry was made.") from None
-        if "timeout" in type(exc).__name__.lower():
-            raise RuntimeError("Hosted provider request timed out; no retry was made.") from None
+        category = _timeout_category(exc)
+        if category:
+            detail = "stream inactivity or read" if category == "read" and config["stream"] else category
+            raise RuntimeError(f"Hosted provider request timed out ({detail}); no retry was made. "
+                               "Review timeout settings and retry explicitly if appropriate.") from None
         raise RuntimeError("Hosted provider connection failed; no retry was made.") from None
+    finally:
+        LOGGER.info("hosted_request model=%s duration_s=%.2f timeout_category=%s http_status=%s attempt=1 stream=%s completion=%s",
+                    config["model"], time.monotonic() - started, category, status, config["stream"], outcome)
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                LOGGER.warning("hosted_client_close_failed")
     reported_model = getattr(response, "model", None)
     if reported_model is not None and reported_model != config["model"]:
         raise RuntimeError("Hosted provider returned a different model identifier; no report was stored.")
@@ -253,6 +313,8 @@ def generate_interpretation(context: dict, section_titles=None, *, profile=ask_m
                "conditions, uncertainty, or scientific references, modify calculated values, or claim unsupported conclusions. "
                "Clearly distinguish hypotheses and missing information. "
                "Do not interpret a slope as resistance unless the user explicitly confirms the Ohmic context and units.")
+    if len(prompt) > ask_muse.MAX_PROMPT_CHARS:
+        raise ValueError("The hosted prompt exceeds the size limit; reduce optional context before retrying.")
     content, catalog_status = _request_content(config, prompt)
     if config["key"] in content:
         raise RuntimeError("Hosted response contains sensitive credential material and was rejected.")
