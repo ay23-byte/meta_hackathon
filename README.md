@@ -486,7 +486,10 @@ changing process variables. The example file has placeholders only.
 
 For the requested model, set `$env:NVIDIA_MODEL = "meta/muse-glimmer-30b"`
 in the same PowerShell process before launching (or set it in the external
-`.env`). `LABLENS_AI_PROVIDER=nvidia` must be set in the process environment. NVIDIA
+`.env`). Set `LABLENS_AI_PROVIDER=nvidia` in that process or the same parent `.env`.
+An explicitly blank or unsupported provider fails closed; if no provider is set,
+the legacy Muse Spark default remains. Check the F · Interpret provider label
+and restart the correct app after configuration changes. NVIDIA
 uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
 there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
 settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable

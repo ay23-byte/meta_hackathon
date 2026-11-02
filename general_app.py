@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import sys
 import zipfile
 from pathlib import Path
@@ -145,7 +144,7 @@ def step_header(letter: str, title: str, caption: str):
 
 with st.sidebar:
     st.title("LabLens AI")
-    selected_mode = os.environ.get("LABLENS_AI_PROVIDER", "").strip().lower()
+    selected_mode = provider_config.selected_ai_provider()
     selected_hosted = selected_mode in ("nvidia", "hosted")
     unsupported_provider = bool(selected_mode and not selected_hosted)
     selected_name = ("NVIDIA NIM" if selected_mode == "nvidia" else
@@ -157,7 +156,7 @@ with st.sidebar:
         live_state = st.session_state.get("hosted_verification", {})
         if live_state.get("fingerprint") != provider_fingerprint:
             live_state = {}
-        st.caption(f"F · Interpret provider: {selected_name}")
+        st.caption(f"F · Interpret provider: {selected_name}. Configured model: {provider['model'] or 'not configured'}.")
         st.json({"provider": selected_name,
                  "api_key_detected": provider["api_key_detected"],
                  "model_configured": provider["model_configured"],
@@ -175,6 +174,8 @@ with st.sidebar:
         st.error(provider["message"])
     else:
         provider_fingerprint = "legacy:muse_spark"
+        st.caption("F · Interpret provider: Muse Spark via Baseten (default; NVIDIA is not selected). "
+                   "Set LABLENS_AI_PROVIDER=nvidia in the process or NVIDIA parent .env to use NVIDIA.")
         st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
         provider = ask_muse.provider_status()
         if provider["api_key_configured"]:
@@ -708,6 +709,11 @@ except Exception as exc:
 # Track the analysis hash separately: a failed live request may clear the
 # report state, but a later context change must still clear stale errors and
 # in-flight flags. Both live and mock reports are invalidated together.
+if st.session_state.get("ai_provider_fingerprint") != provider_fingerprint:
+    st.session_state.pop("ai_state", None)
+    st.session_state.pop("ai_last_error", None)
+    st.session_state.pop("ai_request_in_flight", None)
+    st.session_state["ai_provider_fingerprint"] = provider_fingerprint
 stored_ai_hash = st.session_state.get("ai_context_hash")
 if stored_ai_hash != context_hash:
     st.session_state.pop("ai_state", None)

@@ -21,6 +21,7 @@ from provider_config import (
     is_placeholder,
     nvidia_setting,
     redact,
+    selected_ai_provider,
 )
 
 DEFAULT_MODEL = "meta-models/Muse-Glimmer-30B"
@@ -32,7 +33,7 @@ def _setting(name: str, default: str = "") -> str:
 
 
 def _config() -> dict:
-    mode = _setting("LABLENS_AI_PROVIDER").lower()
+    mode = selected_ai_provider()
     if mode not in ("hosted", "nvidia"):
         raise ValueError("Set LABLENS_AI_PROVIDER to hosted or nvidia to enable this provider.")
     key_name = NVIDIA_KEY_ENV if mode == "nvidia" else "LABLENS_API_KEY"
@@ -70,7 +71,7 @@ def _config() -> dict:
 
 def configuration_status() -> dict:
     """Configuration-only status; never returns secrets or contacts a server."""
-    mode = _setting("LABLENS_AI_PROVIDER").lower()
+    mode = selected_ai_provider()
     key_name = NVIDIA_KEY_ENV if mode == "nvidia" else "LABLENS_API_KEY"
     key = nvidia_setting(key_name) if mode == "nvidia" else _setting(key_name)
     key_detected = not is_placeholder(key)
@@ -93,7 +94,7 @@ def configuration_fingerprint() -> str:
     """Bind session cache to configuration changes without storing raw secrets."""
     values = [_setting(name) for name in ("LABLENS_AI_PROVIDER", "LABLENS_MODEL", "LABLENS_API_KEY",
                                           "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM")]
-    values.extend([nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
+    values.extend([selected_ai_provider(), nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
 

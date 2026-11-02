@@ -59,11 +59,13 @@ the report is rejected rather than mislabelled.
 
 ## NVIDIA NIM mode
 
-Select `LABLENS_AI_PROVIDER=nvidia` in the process environment. Configure
+Select `LABLENS_AI_PROVIDER=nvidia` in the process environment or the parent `.env`. Configure
 `NVIDIA_API_KEY` and the exact `NVIDIA_MODEL` from NVIDIA's catalog in the
 process environment or the external file `F:\meta-hacathon\.env` on Windows;
 on other platforms the fallback is `.env` in the repo's parent.
-Process values (including blank) take precedence, and `LABLENS_DISABLE_DOTENV=1`
+Process values (including blank) take precedence; a blank provider fails closed.
+When no provider is specified, the legacy Muse Spark path remains the default.
+`LABLENS_DISABLE_DOTENV=1`
 disables the external file. The NVIDIA endpoint is fixed to
 `https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.
 There is no default model. For the requested integration set `NVIDIA_MODEL` to

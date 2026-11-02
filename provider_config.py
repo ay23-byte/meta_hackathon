@@ -29,6 +29,7 @@ DEFAULT_MODEL = "meta-models/muse-spark-open"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
 NVIDIA_MODEL_ENV = "NVIDIA_MODEL"
+AI_PROVIDER_ENV = "LABLENS_AI_PROVIDER"
 # Explicit Windows location requested by the user; portable sibling equivalent elsewhere.
 NVIDIA_ENV_FILE = Path(r"F:\meta-hacathon\.env") if os.name == "nt" else ROOT.parent / ".env"
 
@@ -106,7 +107,7 @@ def get_setting(name: str, default: str = "") -> str:
 
 
 def nvidia_setting(name: str) -> str:
-    """Process environment wins (including blank); otherwise read only NVIDIA fields from the external file."""
+    """Process environment wins (including blank); otherwise read allowlisted fields from the parent file."""
     if name not in (NVIDIA_KEY_ENV, NVIDIA_MODEL_ENV):
         raise ValueError("Unsupported NVIDIA setting.")
     if name in os.environ:
@@ -118,6 +119,20 @@ def nvidia_setting(name: str) -> str:
         return value.strip() if isinstance(value, str) else ""
     except (OSError, UnicodeError):
         return ""
+
+
+def selected_ai_provider() -> str:
+    """Select explicitly; a blank configured value fails closed, never selects the legacy provider."""
+    if AI_PROVIDER_ENV in os.environ:
+        return os.environ[AI_PROVIDER_ENV].strip().lower() or "invalid-empty-provider"
+    if dotenv_enabled() and NVIDIA_ENV_FILE.is_file():
+        try:
+            values = dotenv_values(NVIDIA_ENV_FILE, interpolate=False)
+            if AI_PROVIDER_ENV in values:
+                return (values[AI_PROVIDER_ENV] or "").strip().lower() or "invalid-empty-provider"
+        except (OSError, UnicodeError):
+            return "invalid-unreadable-provider-file"
+    return ""
 
 
 def setting_source(name: str) -> str:
