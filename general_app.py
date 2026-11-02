@@ -1317,7 +1317,7 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         st.session_state["ai_request_in_flight"] = True
         st.session_state.pop("ai_last_error", None)
         try:
-            with st.spinner(f"Requesting {selected_name} report..."):
+            with st.spinner(f"Requesting {selected_name} report. Waiting for a complete, validated response; please keep this page open..."):
                 titles = list(effective_titles)
                 if selected_hosted:
                     hosted_context = dict(context)

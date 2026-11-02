@@ -513,7 +513,11 @@ and restart the correct app after configuration changes. NVIDIA
 uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
 there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
 settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable
-(128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 60. Non-streaming is the default;
+(128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 120 for NVIDIA (60 for generic hosted).
+`LABLENS_CONNECT_TIMEOUT_SECONDS` is 1–120 (default 10), and
+`LABLENS_READ_TIMEOUT_SECONDS` is 5–600 (default: the legacy timeout). These
+are per-operation HTTP timeouts, not an overall deadline. A read timeout also
+limits inactivity while streaming. Non-streaming is the default;
 set `$env:LABLENS_NVIDIA_STREAM = "1"` for streaming or `"0"` for non-streaming.
 The app buffers the full stream before validation and display; partial text and
 reasoning content are never displayed.
