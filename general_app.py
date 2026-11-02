@@ -25,6 +25,7 @@ import streamlit as st
 import ask_muse
 import hosted_model_provider
 import provider_config
+import ui_components
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
 from column_inference import infer_columns, suggest_roles
@@ -82,7 +83,8 @@ MAX_UNIT_TEXT = 24
 MAX_CANDIDATE_TEXT = 2000
 MAX_PLOTS_EXPORTED = 4
 
-st.set_page_config(page_title="LabLens AI · General analysis", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="LabLens AI · Research workspace", page_icon="🔬", layout="wide")
+ui_components.apply_theme()
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,9 @@ def _safe_error(exc: Exception) -> str:
 
 
 def step_header(letter: str, title: str, caption: str):
+    section_ids = {"A": "upload", "B": "clean", "C": "configure", "D": "explore",
+                   "E": "fit", "F": "interpret", "G": "export"}
+    ui_components.anchor(section_ids[letter])
     st.subheader(f"{letter} · {title}")
     st.caption(caption)
 
@@ -143,7 +148,7 @@ def step_header(letter: str, title: str, caption: str):
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.title("LabLens AI")
+    ui_components.navigation()
     selected_mode = provider_config.selected_ai_provider()
     selected_hosted = selected_mode in ("nvidia", "hosted")
     unsupported_provider = bool(selected_mode and not selected_hosted)
@@ -208,23 +213,12 @@ with st.sidebar:
                     st.success(f"Connectivity check succeeded: {check[1]}")
                 else:
                     st.error(f"Connectivity check failed: {check[1]}")
-    st.markdown("**Workflow**")
-    for letter, label in (
-        ("A", "Upload"), ("B", "Validate / Clean"), ("C", "Configure"),
-        ("D", "Explore"), ("E", "Fit"), ("F", "Interpret"), ("G", "Export"),
-    ):
-        st.caption(f"{letter} · {label}")
-    st.caption(
-        "Supported input: delimited text/CSV only (.csv, .tsv, .txt). "
-        "Excel, JSON, HDF5 and binary instrument formats are not supported."
-    )
+    st.caption("Analysis runs locally. AI and the bounded agent require separate, explicit actions.")
     st.caption(f"Python {sys.version.split()[0]} · pandas {pd.__version__} · Streamlit {st.__version__}")
 
-st.title("LabLens AI - general scientific data analysis")
-st.caption(
-    "Upload any delimited numeric dataset, choose the columns and model yourself, "
-    "and export a fully reproducible record. Nothing is assumed about your scientific domain."
-)
+ui_components.hero()
+overview_slot = st.empty()
+st.caption("A reproducible workspace for delimited numeric data. Choose your variables and review the assumptions; no scientific domain is inferred.")
 with st.expander("First time here? Quick start"):
     st.markdown(
         "1. Upload a `.csv`, `.tsv` or `.txt` file, or choose a bundled synthetic example.\n"
@@ -243,6 +237,7 @@ step_header("A", "Upload", "Delimiter, encoding, duplicate headers and size are 
 
 upload_col, example_col = st.columns([3, 2])
 with upload_col:
+    st.caption("CSV, TSV or TXT · Up to 5 MiB · Review the detected format before analysis")
     uploaded = st.file_uploader(
         "Upload a delimited text file", type=["csv", "tsv", "txt"],
         help=f"Maximum {MAX_UPLOAD_BYTES // 1024 // 1024} MiB and {MAX_SOURCE_ROWS:,} rows.",
@@ -725,6 +720,24 @@ else:
     if isinstance(ai_state, dict) and ai_state.get("hash") != _hash({"analysis": context_hash, "provider": provider_fingerprint}):
         st.session_state.pop("ai_state", None)
 result["ai"] = None
+
+# Overview reflects the current computation only; it is not a history or a live probe.
+current_state = st.session_state.get("ai_state") or {}
+active_kind_overview = current_state.get("active")
+if active_kind_overview == "live":
+    report_note = "A validated AI report is available for this analysis."
+elif active_kind_overview == "mock":
+    report_note = "A labelled offline mock report is available."
+else:
+    report_note = "No report in F · Interpret; analysis history is not stored."
+provider_note = ("Connectivity checked in this session." if selected_hosted and live_state.get("connectivity")
+                 else "Live connectivity not verified by this overview.")
+with overview_slot.container():
+    ui_components.overview(source_name, len(frame), len(frame.columns), provider=selected_name,
+                           provider_note=provider_note,
+                           fit_note="Fit computed" if fit.success else "Fit unavailable",
+                           report_note=report_note,
+                           source_note="Uploaded dataset" if uploaded is not None else "Bundled example")
 
 
 # Deterministic summaries are shown before the detailed analysis tables.
@@ -1362,38 +1375,39 @@ st.caption(f"AI status: {ai_status}. Active provenance: {active_kind or 'none'}.
            "separate consent checkbox. Local results survive AI failure.")
 
 if current_report:
-    wrapper = current_report
-    if wrapper.get("numeric_guard"):
-        st.caption(wrapper["numeric_guard"]["limitations"])
-    if active_kind == "mock":
-        st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
-        st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
-        st.caption(f"Generator: {wrapper.get('model')}. Provider status: "
-                   f"{wrapper.get('provider_status')}. No provider request was made.")
-    else:
-        st.markdown(f"### {selected_name} report (AI-generated, unverified)")
-        st.caption(f"Provider provenance: {wrapper.get('source')} "
-                   f"(is_mock={str(wrapper.get('is_mock')).lower()}); "
-                   f"provider status: {wrapper.get('provider_status')}; "
-                   f"model: {wrapper.get('model')}; validated at: "
-                   f"{wrapper.get('validated_at_utc', 'unknown')}. "
-                   "Treat this text as hypotheses, not evidence.")
-        if wrapper.get("model_catalog_status") not in (None, "not_applicable"):
-            st.caption(f"NVIDIA model catalog check: {wrapper['model_catalog_status']}; model identity remains unverified.")
-    for section in wrapper["structured"]["sections"]:
-        st.markdown(f"**{section['title']}**")
-        st.text(section["content"])
-    if wrapper["structured"].get("claims"):
-        st.markdown("**Evidence-linked claims**")
-        for index, claim in enumerate(wrapper["structured"]["claims"], start=1):
-            st.text(f"Claim {index} ({claim['evidence_type']}): {claim['claim']}")
-            ids = claim.get("evidence_ids") or []
-            id_text = f" · Computed result IDs: {', '.join(ids)}" if ids else ""
-            st.caption(f"Evidence: {claim['evidence']} · Limitation: {claim['limitation']} · "
-                       f"Verification: {claim['proposed_verification']}{id_text}")
-    st.info("This report was built from the deterministic context only. "
-            "Verify every quantitative statement against sections D and E. "
-            "Never present the offline MOCK as a live AI response.")
+    with st.container(border=True):
+        wrapper = current_report
+        if wrapper.get("numeric_guard"):
+            st.caption(wrapper["numeric_guard"]["limitations"])
+        if active_kind == "mock":
+            st.markdown("### OFFLINE MOCK report (deterministic template — NOT Muse Spark, NOT AI)")
+            st.warning(wrapper.get("disclaimer") or ask_muse.MOCK_DISCLAIMER)
+            st.caption(f"Generator: {wrapper.get('model')}. Provider status: "
+                       f"{wrapper.get('provider_status')}. No provider request was made.")
+        else:
+            st.markdown(f"### {selected_name} report (AI-generated, unverified)")
+            st.caption(f"Provider provenance: {wrapper.get('source')} "
+                       f"(is_mock={str(wrapper.get('is_mock')).lower()}); "
+                       f"provider status: {wrapper.get('provider_status')}; "
+                       f"model: {wrapper.get('model')}; validated at: "
+                       f"{wrapper.get('validated_at_utc', 'unknown')}. "
+                       "Treat this text as hypotheses, not evidence.")
+            if wrapper.get("model_catalog_status") not in (None, "not_applicable"):
+                st.caption(f"NVIDIA model catalog check: {wrapper['model_catalog_status']}; model identity remains unverified.")
+        for section in wrapper["structured"]["sections"]:
+            st.markdown(f"**{section['title']}**")
+            st.text(section["content"])
+        if wrapper["structured"].get("claims"):
+            st.markdown("**Evidence-linked claims**")
+            for index, claim in enumerate(wrapper["structured"]["claims"], start=1):
+                st.text(f"Claim {index} ({claim['evidence_type']}): {claim['claim']}")
+                ids = claim.get("evidence_ids") or []
+                id_text = f" · Computed result IDs: {', '.join(ids)}" if ids else ""
+                st.caption(f"Evidence: {claim['evidence']} · Limitation: {claim['limitation']} · "
+                           f"Verification: {claim['proposed_verification']}{id_text}")
+        st.info("This report was built from the deterministic context only. "
+                "Verify every quantitative statement against sections D and E. "
+                "Never present the offline MOCK as a live AI response.")
 else:
     st.caption("No report has been generated. The app works fully without an API key; "
                "the offline MOCK is always labelled as a mock.")

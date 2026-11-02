@@ -279,3 +279,25 @@ def test_offline_mock_button_is_labelled_and_never_calls_provider(monkeypatch):
     preview = " ".join(item.value for item in at.get("code"))
     assert "OFFLINE MOCK report" in preview
     assert "is_mock" not in preview  # report.md labels it in prose, not raw JSON
+
+
+def test_workspace_navigation_and_honest_overview():
+    at = run_app()
+    assert not at.exception
+    markup = "\n".join(item.value for item in at.markdown)
+    for anchor in ("overview", "upload", "clean", "configure", "explore", "fit", "interpret", "export"):
+        assert f'href="#{anchor}"' in markup
+        assert f'id="{anchor}"' in markup
+    assert "sample_voltage_current.csv" in markup and "Bundled example" in markup
+    assert "Live connectivity not verified" in markup and "history is not stored" in markup
+
+
+def test_workspace_escapes_dataset_names_in_summary():
+    at = run_app()
+    csv = b"x,y\n1,2\n2,4\n3,6\n"
+    at.file_uploader[0].set_value(('<img src=x onerror=alert(1)>.csv', csv, 'text/csv')).run()
+    assert not at.exception
+    markup = "\n".join(item.value for item in at.markdown)
+    assert "&lt;img src=x onerror=alert(1)&gt;.csv" in markup
+    assert '<img src=x onerror=alert(1)>' not in markup
+    assert "Uploaded dataset" in markup

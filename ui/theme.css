@@ -1,0 +1,68 @@
+/* LabLens design system: presentation only; analysis and widget semantics stay native. */
+:root {
+  --ll-ink: #12223c;
+  --ll-muted: #53657c;
+  --ll-blue: #2563eb;
+  --ll-teal: #0e8f86;
+  --ll-border: #e0e8f2;
+  --ll-surface: #ffffff;
+  --ll-navy: #101d35;
+}
+.stApp, [data-testid="stAppViewContainer"] { background: #f4f7fb; color: var(--ll-ink); }
+[data-testid="stMainBlockContainer"] { max-width: 1480px; padding-top: 2.4rem; padding-bottom: 4rem; }
+[data-testid="stSidebar"] { background: var(--ll-navy); border-right: 1px solid #253650; }
+[data-testid="stSidebar"] * { color: #d6e3f1; }
+[data-testid="stSidebar"] [data-testid="stExpander"] { background: #182a46; border: 1px solid #30435e; }
+[data-testid="stSidebar"] a { color: #d7e7fa; }
+[data-testid="stSidebar"] a:hover { color: #ffffff; }
+[data-testid="stSidebarCollapsedControl"] button { color: #12223c; }
+.ll-brand { display:flex; align-items:center; gap:12px; margin: 2px 0 22px; }
+.ll-logo { width:42px; height:42px; flex:none; border:1px solid #426a93; border-radius:13px; background:#1a3658; display:grid; place-items:center; color:#7de5d7 !important; font-size:17px; font-weight:800; letter-spacing:-.08em; }
+.ll-brand-name { color:#f5f9ff !important; font-size:19px; font-weight:750; letter-spacing:-.035em; line-height:1.1; }
+.ll-brand-sub { color:#a3b7d0 !important; text-transform:uppercase; font-size:9px; letter-spacing:.14em; margin-top:5px; font-weight:700; }
+.ll-nav-label { color:#95a9c2 !important; font-size:10px; text-transform:uppercase; letter-spacing:.14em; font-weight:700; margin: 0 0 10px; }
+.ll-nav { display:flex; flex-direction:column; gap:3px; margin-bottom:20px; }
+.ll-nav a { display:flex; gap:11px; align-items:center; padding:9px 11px; border-radius:8px; font-size:13px; text-decoration:none; color:#c7d5e8 !important; transition:background .16s ease, color .16s ease; }
+.ll-nav a:hover, .ll-nav a:focus-visible { background:#253d5d; color:white !important; outline:2px solid #8cc6ff; outline-offset:1px; }
+.ll-nav-icon { color:#86d8d2 !important; width:18px; text-align:center; font-size:12px; font-weight:700; }
+body:not(:has(.ll-section-anchor:target)) .ll-nav a[href="#overview"],
+body:has(#overview:target) .ll-nav a[href="#overview"],
+body:has(#upload:target) .ll-nav a[href="#upload"],
+body:has(#clean:target) .ll-nav a[href="#clean"],
+body:has(#configure:target) .ll-nav a[href="#configure"],
+body:has(#explore:target) .ll-nav a[href="#explore"],
+body:has(#fit:target) .ll-nav a[href="#fit"],
+body:has(#interpret:target) .ll-nav a[href="#interpret"],
+body:has(#export:target) .ll-nav a[href="#export"] { background:#203959; color:#fff !important; }
+.ll-breadcrumb { text-transform:uppercase; letter-spacing:.13em; color:#677b94; font-size:10px; font-weight:750; margin-bottom:13px; }
+.ll-hero { position:relative; overflow:hidden; border:1px solid #d9e5f4; border-radius:17px; background:linear-gradient(115deg,#ffffff 34%,#edf5ff 100%); padding:30px 34px; margin-bottom:15px; }
+.ll-kicker { color:#087f7d; text-transform:uppercase; letter-spacing:.13em; font-size:10px; font-weight:800; margin-bottom:10px; }
+.ll-hero h1 { font-size: clamp(25px, 3vw, 36px); letter-spacing:-.045em; line-height:1.17; color:#12223c; margin:0 0 10px; font-weight:750; }
+.ll-hero p { color:#52677f; font-size:14px; line-height:1.65; max-width:610px; margin:0 0 21px; }
+.ll-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.ll-actions a { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; border-radius:8px; padding:10px 16px; font-size:13px; font-weight:700; }
+.ll-actions a.ll-primary { background:#2563eb; color:#fff !important; }
+.ll-actions a.ll-secondary { background:#fff; color:#26415d !important; border:1px solid #d9e3ef; }
+.ll-actions a:focus-visible { outline:3px solid #0e8f86; outline-offset:3px; }
+.ll-overview { display:grid; grid-template-columns:1.35fr 1fr 1fr; gap:12px; margin: 0 0 20px; }
+.ll-card { background:var(--ll-surface); border:1px solid var(--ll-border); border-radius:12px; padding:17px 18px; min-width:0; }
+.ll-card-label { color:#6a7d94; text-transform:uppercase; font-size:10px; letter-spacing:.1em; font-weight:750; margin-bottom:9px; }
+.ll-card-value { color:#172c47; font-size:15px; font-weight:700; overflow-wrap:anywhere; line-height:1.35; }
+.ll-card-note { color:#60728a; font-size:12px; line-height:1.5; margin-top:6px; }
+.ll-pill { display:inline-block; font-size:10px; font-weight:700; color:#08766f; background:#e4f7f3; border:1px solid #c2eae2; border-radius:999px; padding:4px 8px; }
+.ll-section-anchor { display:block; position:relative; top:-70px; visibility:hidden; }
+[data-testid="stMain"] h2, [data-testid="stMain"] h3 { color:#142945; letter-spacing:-.025em; }
+[data-testid="stMain"] h2 { font-size:1.32rem; padding-top:.75rem; }
+[data-testid="stMetric"] { background:#fff; border:1px solid var(--ll-border); border-radius:12px; padding:16px 17px; box-shadow:0 2px 8px rgba(29,52,82,.025); }
+[data-testid="stMetricLabel"] { color:#596d85; }
+[data-testid="stMetricValue"] { color:#172c47; font-size:1.5rem; }
+[data-testid="stExpander"] { border:1px solid var(--ll-border); border-radius:11px; background:#fff; }
+[data-testid="stFileUploader"] { background:#fff; border:1px solid var(--ll-border); padding:14px; border-radius:12px; }
+[data-testid="stMain"] button[kind="primary"] { background:#2563eb; border:1px solid #2563eb; color:#fff; border-radius:8px; font-weight:650; }
+[data-testid="stMain"] button[kind="secondary"] { border-radius:8px; }
+[data-testid="stMain"] button:focus-visible, [data-testid="stSidebar"] button:focus-visible { outline:3px solid #2b84f3; outline-offset:2px; }
+[data-testid="stDataFrame"], [data-testid="stArrowVegaLiteChart"] { border-radius:10px; overflow:hidden; }
+[data-testid="stMain"] [data-testid="stAlert"] { border-radius:10px; }
+@media (max-width: 900px) { .ll-overview { grid-template-columns:1fr 1fr; } .ll-overview .ll-card:first-child { grid-column:1 / -1; } }
+@media (max-width: 600px) { [data-testid="stMainBlockContainer"] { padding:1rem 1rem 3rem; } .ll-hero { padding:23px 20px; } .ll-overview { grid-template-columns:1fr; } .ll-overview .ll-card:first-child { grid-column:auto; } .ll-actions a { min-height:44px; } }
+@media (prefers-reduced-motion: reduce) { .ll-nav a { transition:none; } }
