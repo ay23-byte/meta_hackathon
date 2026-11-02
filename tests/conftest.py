@@ -47,5 +47,12 @@ def isolate_provider_environment(request, monkeypatch):
         return
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_MODEL", raising=False)
+    # Never inherit another provider selection, credentials, or request settings
+    # from the developer's shell. Tests opt in to these explicitly.
+    for name in ("LABLENS_AI_PROVIDER", "NVIDIA_API_KEY", "NVIDIA_MODEL",
+                 "LABLENS_API_KEY", "LABLENS_BASE_URL", "LABLENS_MODEL",
+                 "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS",
+                 "LABLENS_NVIDIA_STREAM", "BLUESMINDS_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("LABLENS_REPORT_MAX_TOKENS", raising=False)
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")

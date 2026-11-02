@@ -180,7 +180,7 @@ with st.sidebar:
     else:
         provider_fingerprint = "legacy:muse_spark"
         st.caption("F · Interpret provider: Muse Spark via Baseten (default; NVIDIA is not selected). "
-                   "Set LABLENS_AI_PROVIDER=nvidia in the process or NVIDIA parent .env to use NVIDIA.")
+                   "Set LABLENS_AI_PROVIDER=nvidia in the process or project .env to use NVIDIA.")
         st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
         provider = ask_muse.provider_status()
         if provider["api_key_configured"]:

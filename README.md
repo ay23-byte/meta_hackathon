@@ -497,15 +497,16 @@ $env:LABLENS_AI_PROVIDER = "nvidia"
 
 Before launch, obtain an NVIDIA API key and independently confirm access to
 `meta/muse-glimmer-30b` in NVIDIA's API Catalog. Set `NVIDIA_API_KEY` and
-`NVIDIA_MODEL` privately in the process environment, or in `F:\meta-hacathon\.env`
-on Windows. On other platforms the fallback is `.env` in the repository's parent directory. Do not commit, print, screenshot or
+`NVIDIA_MODEL` privately in the process environment or the project-local `.env`.
+On Windows, `F:\meta-hacathon\.env` is used only if the project `.env` is absent.
+Do not commit, print, screenshot or
 share the key. Process environment values override the file, even when blank;
 `LABLENS_DISABLE_DOTENV=1` disables file loading. Restart Streamlit after
 changing process variables. The example file has placeholders only.
 
 For the requested model, set `$env:NVIDIA_MODEL = "meta/muse-glimmer-30b"`
-in the same PowerShell process before launching (or set it in the external
-`.env`). Set `LABLENS_AI_PROVIDER=nvidia` in that process or the same parent `.env`.
+in the same PowerShell process before launching (or set it in the project
+`.env`). Set `LABLENS_AI_PROVIDER=nvidia` in that process or the same `.env`.
 An explicitly blank or unsupported provider fails closed; if no provider is set,
 the legacy Muse Spark default remains. Check the F · Interpret provider label
 and restart the correct app after configuration changes. NVIDIA

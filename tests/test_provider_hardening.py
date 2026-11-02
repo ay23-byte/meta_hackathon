@@ -323,3 +323,17 @@ def test_legacy_app_duplicate_clicks_do_not_duplicate_provider_call(monkeypatch)
     assert not at.exception
     assert len(calls) == 1
     assert any("no duplicate provider request" in item.value for item in at.info)
+
+
+def test_blank_process_key_blocks_dotenv_fallback(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("BASETEN_API_KEY=unit-file-secret\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "ENV_FILE", env_file)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV")
+    monkeypatch.setenv("BASETEN_API_KEY", "  ")
+    provider_config.reload_dotenv()
+    try:
+        assert provider_config.get_api_key() is None
+        assert provider_config.setting_source("BASETEN_API_KEY") == "none"
+    finally:
+        provider_config.reload_dotenv()

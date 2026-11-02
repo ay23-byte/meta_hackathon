@@ -704,3 +704,28 @@ def test_provider_change_clears_stale_error_without_call(monkeypatch, tmp_path):
     app.run()
     assert not app.session_state.get("ai_last_error") and not app.exception
     assert any("Unsupported LABLENS_AI_PROVIDER" in e.value for e in app.error)
+
+
+def test_nvidia_project_dotenv_and_process_precedence(monkeypatch, tmp_path):
+    import provider_config
+
+    project = tmp_path / "project" / ".env"
+    project.parent.mkdir()
+    legacy = tmp_path / "legacy.env"
+    project.write_text("LABLENS_AI_PROVIDER=nvidia\nNVIDIA_API_KEY=unit-project-secret\n"
+                       "NVIDIA_MODEL=meta/muse-glimmer-30b\n", encoding="utf-8")
+    legacy.write_text("NVIDIA_API_KEY=unit-legacy-secret\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "ROOT", project.parent)
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", project)
+    monkeypatch.setattr(provider_config, "NVIDIA_LEGACY_ENV_FILE", legacy)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV")
+    assert provider_config.selected_ai_provider() == "nvidia"
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "unit-project-secret"
+    assert "NVIDIA_API_KEY" not in os.environ
+    monkeypatch.setenv("NVIDIA_API_KEY", "")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
+    monkeypatch.delenv("NVIDIA_API_KEY")
+    project.unlink()
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "unit-legacy-secret"
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
