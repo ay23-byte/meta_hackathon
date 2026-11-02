@@ -9,11 +9,12 @@ import hashlib
 import json
 import logging
 import os
+import random
 import time
 from importlib.metadata import version
 from urllib.parse import urlsplit
 
-from openai import OpenAI
+from openai import APIConnectionError, OpenAI
 
 # SDK 3 uses httpx2; SDK 1/2 use httpx. Supply the timeout type expected
 # by the installed SDK rather than adding an incompatible second transport.
@@ -70,8 +71,9 @@ def _config() -> dict:
         raise ValueError(f"{NVIDIA_MODEL_ENV if mode == 'nvidia' else 'LABLENS_MODEL'} must be a nonempty model identifier.")
     tokens = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "nvidia" else "2048")
     timeout = _setting("LABLENS_TIMEOUT_SECONDS", "120" if mode == "nvidia" else "60")
-    connect_timeout = _setting("LABLENS_CONNECT_TIMEOUT_SECONDS", "10")
-    read_timeout = _setting("LABLENS_READ_TIMEOUT_SECONDS", timeout)
+    connect_timeout = _setting("LABLENS_CONNECT_TIMEOUT_SECONDS", "30" if mode == "nvidia" else "10")
+    read_timeout = _setting("LABLENS_READ_TIMEOUT_SECONDS", "300" if mode == "nvidia" and "LABLENS_TIMEOUT_SECONDS" not in os.environ else timeout)
+    catalog_retries = _setting("LABLENS_NVIDIA_CATALOG_RETRIES", "0")
     if not tokens.isascii() or not tokens.isdecimal() or not 128 <= int(tokens) <= 8192:
         raise ValueError("LABLENS_MAX_OUTPUT_TOKENS must be an integer from 128 to 8192.")
     if not timeout.isascii() or not timeout.isdecimal() or not 5 <= int(timeout) <= 120:
@@ -80,11 +82,14 @@ def _config() -> dict:
         raise ValueError("LABLENS_CONNECT_TIMEOUT_SECONDS must be an integer from 1 to 120.")
     if not read_timeout.isascii() or not read_timeout.isdecimal() or not 5 <= int(read_timeout) <= 600:
         raise ValueError("LABLENS_READ_TIMEOUT_SECONDS must be an integer from 5 to 600.")
+    if catalog_retries not in ("0", "1", "2"):
+        raise ValueError("LABLENS_NVIDIA_CATALOG_RETRIES must be 0, 1, or 2.")
     streaming = _setting("LABLENS_NVIDIA_STREAM", "0") if mode == "nvidia" else "0"
     if streaming not in ("0", "1"):
         raise ValueError("LABLENS_NVIDIA_STREAM must be 0 or 1.")
     return {"key": key, "base": base, "model": model, "tokens": int(tokens), "timeout": int(timeout), "mode": mode,
-            "connect_timeout": int(connect_timeout), "read_timeout": int(read_timeout), "stream": streaming == "1"}
+            "connect_timeout": int(connect_timeout), "read_timeout": int(read_timeout),
+            "catalog_retries": int(catalog_retries), "stream": streaming == "1"}
 
 
 def configuration_status() -> dict:
@@ -112,7 +117,8 @@ def configuration_fingerprint() -> str:
     """Bind session cache to configuration changes without storing raw secrets."""
     values = [_setting(name) for name in ("LABLENS_AI_PROVIDER", "LABLENS_MODEL", "LABLENS_API_KEY",
                                           "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS",
-                                          "LABLENS_CONNECT_TIMEOUT_SECONDS", "LABLENS_READ_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM")]
+                                          "LABLENS_CONNECT_TIMEOUT_SECONDS", "LABLENS_READ_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM",
+                                          "LABLENS_NVIDIA_CATALOG_RETRIES")]
     values.extend([selected_ai_provider(), nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
@@ -144,13 +150,18 @@ class StreamResponseError(Exception):
     """Fixed, secret-free streaming error."""
 
 
-def _collect_stream(response, model: str) -> str:
+def _collect_stream(response, model: str, stats: dict | None = None) -> str:
     """Buffer visible content only; reject incomplete, refused or mismatched streams."""
     parts = []
     length = 0
     finished = False
+    stats = stats if stats is not None else {}
+    started = time.monotonic()
     try:
         for chunk in response:
+            stats["chunks"] = stats.get("chunks", 0) + 1
+            if stats["chunks"] == 1:
+                stats["first_chunk_s"] = round(time.monotonic() - started, 2)
             reported_model = getattr(chunk, "model", None)
             if reported_model is not None and reported_model != model:
                 raise StreamResponseError("Hosted provider returned a different model identifier; no report was stored.")
@@ -169,6 +180,7 @@ def _collect_stream(response, model: str) -> str:
             if content is not None and not isinstance(content, str):
                 raise StreamResponseError("Hosted provider returned malformed stream content.")
             if content:
+                stats["visible_chunks"] = stats.get("visible_chunks", 0) + 1
                 if finished:
                     raise StreamResponseError("Hosted provider returned content after stream completion.")
                 length += len(content)
@@ -212,13 +224,45 @@ def _timeout_category(exc: Exception) -> str | None:
     return None
 
 
+def _catalog_with_retries(client, model: str, retries: int) -> str:
+    """Retry only the idempotent model-list request, never an inference request."""
+    for attempt in range(retries + 1):
+        try:
+            return _validate_nvidia_model(client, model)
+        except ModelValidationError:
+            raise
+        except Exception as exc:
+            status = ask_muse._http_status(exc)
+            transient = status in (429, 500, 502, 503, 504) or (
+                status is None and (isinstance(exc, (APIConnectionError, httpx.ConnectError)) or
+                                    _timeout_category(exc) in ("connection", "read", "connection pool")))
+            if not transient or attempt >= retries:
+                raise
+            headers = getattr(getattr(exc, "response", None), "headers", None)
+            retry_after = headers.get("retry-after") if headers else None
+            if retry_after is None:
+                delay = min(4.0, 0.5 * (2 ** attempt) + random.uniform(0, 0.25))
+            else:
+                try:
+                    delay = float(retry_after)
+                except (TypeError, ValueError):
+                    raise exc from None  # Unknown delay: fail rather than retry too early.
+                if not 0 <= delay <= 5:
+                    raise  # Never sleep or retry early for an excessive delay.
+            LOGGER.info("hosted_catalog_retry attempt=%s http_status=%s delay_s=%.2f", attempt + 1, status, delay)
+            time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def _request_content(config: dict, prompt: str) -> tuple[str, str]:
-    """Single bounded request; never retry automatically or expose provider errors."""
+    """At most one inference; only the NVIDIA model-list GET can be retried."""
     started = time.monotonic()
     client = None
     category = "none"
     status = None
     outcome = "failed"
+    stage = "client_setup"
+    stats = {}
     try:
         timeout = httpx.Timeout(config["timeout"], connect=config["connect_timeout"], read=config["read_timeout"])
         client = OpenAI(api_key=config["key"], base_url=config["base"], timeout=timeout, max_retries=0)
@@ -226,11 +270,14 @@ def _request_content(config: dict, prompt: str) -> tuple[str, str]:
                    "max_tokens": config["tokens"], "stream": config["stream"]}
         catalog_status = "not_applicable"
         if config["mode"] == "nvidia":
-            catalog_status = _validate_nvidia_model(client, config["model"])
+            stage = "model_catalog"
+            catalog_status = _catalog_with_retries(client, config["model"], config["catalog_retries"])
             request.update(temperature=0.2, top_p=1)
+        stage = "initial_response"
         response = client.chat.completions.create(**request)
         if config["stream"]:
-            content = _collect_stream(response, config["model"])
+            stage = "stream_read"
+            content = _collect_stream(response, config["model"], stats)
             outcome = "stream_complete"
             return content, catalog_status
         outcome = "response_received"
@@ -241,20 +288,21 @@ def _request_content(config: dict, prompt: str) -> tuple[str, str]:
         if status in (401, 403):
             raise RuntimeError("Hosted provider authentication or access was rejected (HTTP " + str(status) + ").") from None
         if status == 402:
-            raise RuntimeError("Hosted provider requires payment or additional quota (HTTP 402); no retry was made.") from None
+            raise RuntimeError("Hosted provider requires payment or additional quota (HTTP 402); no inference retry was made.") from None
         if status == 429:
-            raise RuntimeError("Hosted provider rate limit or quota reached (HTTP 429); no retry was made.") from None
+            raise RuntimeError("Hosted provider rate limit or quota reached (HTTP 429); no inference retry was made.") from None
         if status is not None:
-            raise RuntimeError(f"Hosted provider returned HTTP {status}; no retry was made.") from None
+            raise RuntimeError(f"Hosted provider returned HTTP {status}; no inference retry was made.") from None
         category = _timeout_category(exc)
         if category:
-            detail = "stream inactivity or read" if category == "read" and config["stream"] else category
-            raise RuntimeError(f"Hosted provider request timed out ({detail}); no retry was made. "
+            detail = "stream inactivity or read" if category == "read" and stage == "stream_read" else category
+            raise RuntimeError(f"Hosted provider request timed out ({detail}) during {stage.replace('_', ' ')}; no inference retry was made. "
                                "Review timeout settings and retry explicitly if appropriate.") from None
-        raise RuntimeError("Hosted provider connection failed; no retry was made.") from None
+        raise RuntimeError("Hosted provider connection failed; no inference retry was made.") from None
     finally:
-        LOGGER.info("hosted_request model=%s duration_s=%.2f timeout_category=%s http_status=%s attempt=1 stream=%s completion=%s",
-                    config["model"], time.monotonic() - started, category, status, config["stream"], outcome)
+        LOGGER.info("hosted_request model=%s duration_s=%.2f stage=%s timeout_category=%s http_status=%s inference_attempt=1 stream=%s completion=%s prompt_chars=%s max_tokens=%s chunks=%s visible_chunks=%s first_chunk_s=%s",
+                    config["model"], time.monotonic() - started, stage, category, status, config["stream"], outcome,
+                    len(prompt), config["tokens"], stats.get("chunks", 0), stats.get("visible_chunks", 0), stats.get("first_chunk_s"))
         close = getattr(client, "close", None)
         if callable(close):
             try:
@@ -292,7 +340,7 @@ def check_connectivity(*, confirmed: bool = False) -> str:
 
 def generate_interpretation(context: dict, section_titles=None, *, profile=ask_muse.DEFAULT_REPORT_PROFILE,
                             confirmed: bool = False) -> dict:
-    """One explicitly consented request; no automatic retries or fallback."""
+    """One explicitly consented inference; no inference retries or fallback."""
     if confirmed is not True:
         raise ValueError("Explicit request consent is required before a hosted call.")
     config = _config()

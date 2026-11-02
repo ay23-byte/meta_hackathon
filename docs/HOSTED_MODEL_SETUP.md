@@ -20,8 +20,8 @@ or logs. Set them privately in the same terminal/process that starts Streamlit.
 | `LABLENS_MODEL` | Optional confirmed model ID; default `meta-models/Muse-Glimmer-30B`. Explicitly blank is rejected. |
 | `LABLENS_MAX_OUTPUT_TOKENS` | Optional integer 128–8192; default 2048. |
 | `LABLENS_TIMEOUT_SECONDS` | Optional integer 5–120; default 60 (120 for NVIDIA); write/pool and default read timeout. |
-| `LABLENS_CONNECT_TIMEOUT_SECONDS` | Optional integer 1–120; default 10. |
-| `LABLENS_READ_TIMEOUT_SECONDS` | Optional integer 5–600; default is `LABLENS_TIMEOUT_SECONDS`. Bounds read/stream inactivity, not total elapsed time. |
+| `LABLENS_CONNECT_TIMEOUT_SECONDS` | Optional integer 1–120; default 10 (30 for NVIDIA). |
+| `LABLENS_READ_TIMEOUT_SECONDS` | Optional integer 5–600; default 300 for NVIDIA when `LABLENS_TIMEOUT_SECONDS` is unset, otherwise that setting. Bounds read/stream inactivity, not total elapsed time. |
 
 Use your OS's secret-management method to set the key in the process environment;
 configure the other values from your provider's instructions. Do not use the
@@ -79,3 +79,21 @@ See README for setup and model-list validation.
 No NVIDIA live access, model identity or billing has been verified by tests.
 The old Bluesminds mode is no longer selectable; an old selection fails closed.
 This note preserves migration history without silently changing providers.
+
+### Timeout investigation
+
+`python nvidia_smoke.py --confirm-live` sends a short potentially billable
+completion using the configured NVIDIA model and endpoint. Add `--compare-report`
+only if you consent to a second, full-report request on bundled synthetic data.
+It prints no prompts, results, or keys. Set `LABLENS_NVIDIA_STREAM=1` to test
+the streaming path. Neither command runs automatically.
+
+The INFO log `hosted_request` reports stage (model catalog, initial response, or
+stream read), prompt character count, token limit, chunks received and time to
+first chunk after the streaming response starts. It never logs the prompt or
+chunk text. HTTP read timeout measures transport inactivity, not a total
+deadline; network heartbeats or fragmented bytes can reset it without producing
+an SDK chunk. No log can diagnose an earlier failure that did not emit it.
+Inference is never retried automatically. `LABLENS_NVIDIA_CATALOG_RETRIES`
+(0–2, default 0) only retries transient failures of the model-list GET with
+bounded delay; unsupported or excessive Retry-After values stop retries.
