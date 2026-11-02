@@ -497,7 +497,7 @@ $env:LABLENS_AI_PROVIDER = "nvidia"
 
 Before launch, obtain an NVIDIA API key and independently confirm access to
 `meta/muse-glimmer-30b` in NVIDIA's API Catalog. Set `NVIDIA_API_KEY` and
-`NVIDIA_MODEL` privately in the process environment or the project-local `.env`.
+`NVIDIA_MODEL` (optional override) privately in the process environment or the project-local `.env`.
 On Windows, `F:\meta-hacathon\.env` is used only if the project `.env` is absent.
 Do not commit, print, screenshot or
 share the key. Process environment values override the file, even when blank;
@@ -511,7 +511,7 @@ An explicitly blank or unsupported provider fails closed; if no provider is set,
 the legacy Muse Spark default remains. Check the F · Interpret provider label
 and restart the correct app after configuration changes. NVIDIA
 uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
-there is no model default and generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
+the model defaults to `meta/muse-glimmer-30b` when `NVIDIA_MODEL` is absent; an explicitly blank model fails closed. Generic `LABLENS_MODEL` / `LABLENS_BASE_URL`
 settings do not override NVIDIA. `LABLENS_MAX_OUTPUT_TOKENS` is configurable
 (128–8192, default 512); `LABLENS_TIMEOUT_SECONDS` is 5–120, default 120 for NVIDIA (60 for generic hosted).
 `LABLENS_CONNECT_TIMEOUT_SECONDS` is 1–120 (default 30 for NVIDIA, 10 for generic hosted), and

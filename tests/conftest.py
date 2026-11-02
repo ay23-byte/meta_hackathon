@@ -39,12 +39,19 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def isolate_provider_environment(request, monkeypatch):
+def isolate_provider_environment(request, monkeypatch, tmp_path):
     """No unit test may inherit a developer key or trigger a live API call."""
     if request.node.get_closest_marker("live"):
         # Explicitly opt-in live tests may use a real process env / .env key.
         monkeypatch.delenv("LABLENS_DISABLE_DOTENV", raising=False)
         return
+    import provider_config
+
+    # Even tests that re-enable dotenv can only read a disposable test path.
+    monkeypatch.setattr(provider_config, "ENV_FILE", tmp_path / "isolated.env")
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", None)
+    monkeypatch.setattr(provider_config, "NVIDIA_LEGACY_ENV_FILE", None)
+    provider_config.reload_dotenv()
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_MODEL", raising=False)
     # Never inherit another provider selection, credentials, or request settings

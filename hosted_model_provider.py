@@ -29,6 +29,7 @@ from provider_config import (
     NVIDIA_BASE_URL,
     NVIDIA_KEY_ENV,
     NVIDIA_MODEL_ENV,
+    get_nvidia_model,
     is_placeholder,
     nvidia_setting,
     redact,
@@ -64,7 +65,7 @@ def _config() -> dict:
         _ = parts.port
     except ValueError:
         raise ValueError("LABLENS_BASE_URL must be an HTTPS URL without credentials, query or fragment.") from None
-    model = nvidia_setting(NVIDIA_MODEL_ENV) if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
+    model = get_nvidia_model() if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
     if key in base or key in model or redact(base) != base or redact(model) != model:
         raise ValueError("Configuration must not place the API key in the URL or model identifier.")
     if not model or is_placeholder(model) or len(model) > 200 or any(ord(c) < 33 or ord(c) > 126 for c in model):
@@ -98,7 +99,7 @@ def configuration_status() -> dict:
     key_name = NVIDIA_KEY_ENV if mode == "nvidia" else "LABLENS_API_KEY"
     key = nvidia_setting(key_name) if mode == "nvidia" else _setting(key_name)
     key_detected = not is_placeholder(key)
-    model = nvidia_setting(NVIDIA_MODEL_ENV) if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
+    model = get_nvidia_model() if mode == "nvidia" else _setting("LABLENS_MODEL", DEFAULT_MODEL)
     model_configured = bool(mode in ("nvidia", "hosted") and model and not is_placeholder(model)
                             and len(model) <= 200 and all(33 <= ord(c) <= 126 for c in model)
                             and not (key_detected and key in model) and redact(model) == model)
@@ -119,7 +120,7 @@ def configuration_fingerprint() -> str:
                                           "LABLENS_BASE_URL", "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS",
                                           "LABLENS_CONNECT_TIMEOUT_SECONDS", "LABLENS_READ_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM",
                                           "LABLENS_NVIDIA_CATALOG_RETRIES")]
-    values.extend([selected_ai_provider(), nvidia_setting(NVIDIA_KEY_ENV), nvidia_setting(NVIDIA_MODEL_ENV)])
+    values.extend([selected_ai_provider(), nvidia_setting(NVIDIA_KEY_ENV), get_nvidia_model()])
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
 
