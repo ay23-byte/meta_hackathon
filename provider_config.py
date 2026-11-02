@@ -26,9 +26,11 @@ ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
 BASE_URL = "https://inference.baseten.co/v1"
 DEFAULT_MODEL = "meta-models/muse-spark-open"
-BLUESMINDS_BASE_URL = "https://api.bluesminds.com/v1"
-BLUESMINDS_MODEL = "meta/muse-glimmer-30b"
-BLUESMINDS_KEY_ENV = "BLUESMINDS_API_KEY"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
+NVIDIA_MODEL_ENV = "NVIDIA_MODEL"
+# Explicit Windows location requested by the user; portable sibling equivalent elsewhere.
+NVIDIA_ENV_FILE = Path(r"F:\meta-hacathon.env") if os.name == "nt" else ROOT.parent / "meta-hacathon.env"
 
 KEY_ENV = "BASETEN_API_KEY"
 MODEL_ENV = "BASETEN_MODEL"
@@ -101,6 +103,21 @@ def get_setting(name: str, default: str = "") -> str:
         if file_value:
             return file_value
     return default
+
+
+def nvidia_setting(name: str) -> str:
+    """Process environment wins (including blank); otherwise read only NVIDIA fields from the external file."""
+    if name not in (NVIDIA_KEY_ENV, NVIDIA_MODEL_ENV):
+        raise ValueError("Unsupported NVIDIA setting.")
+    if name in os.environ:
+        return os.environ[name].strip()
+    if not dotenv_enabled() or not NVIDIA_ENV_FILE.is_file():
+        return ""
+    try:
+        value = dotenv_values(NVIDIA_ENV_FILE, interpolate=False).get(name)
+        return value.strip() if isinstance(value, str) else ""
+    except (OSError, UnicodeError):
+        return ""
 
 
 def setting_source(name: str) -> str:
@@ -185,9 +202,17 @@ def secret_values() -> list[str]:
     machine cannot leak either one through an exception string.
     """
     values: list[str] = []
-    hosted_key = os.getenv(BLUESMINDS_KEY_ENV)
+    hosted_key = nvidia_setting(NVIDIA_KEY_ENV)
     generic_key = os.getenv("LABLENS_API_KEY")
-    for key in (hosted_key, generic_key):
+    old_hosted_key = os.getenv("BLUESMINDS_API_KEY")  # Redaction only; this provider is no longer selectable.
+    if dotenv_enabled() and NVIDIA_ENV_FILE.is_file():
+        try:
+            file_key = dotenv_values(NVIDIA_ENV_FILE, interpolate=False).get(NVIDIA_KEY_ENV)
+            if file_key and not is_placeholder(file_key):
+                values.append(file_key.strip())
+        except (OSError, UnicodeError):
+            pass
+    for key in (hosted_key, generic_key, old_hosted_key):
         if key and not is_placeholder(key):
             values.append(key.strip())
     raw_process = os.getenv(KEY_ENV)

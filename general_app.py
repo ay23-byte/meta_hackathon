@@ -146,9 +146,9 @@ def step_header(letter: str, title: str, caption: str):
 with st.sidebar:
     st.title("LabLens AI")
     selected_mode = os.environ.get("LABLENS_AI_PROVIDER", "").strip().lower()
-    selected_hosted = selected_mode in ("bluesminds", "hosted")
+    selected_hosted = selected_mode in ("nvidia", "hosted")
     unsupported_provider = bool(selected_mode and not selected_hosted)
-    selected_name = ("Bluesminds Muse Glimmer" if selected_mode == "bluesminds" else
+    selected_name = ("NVIDIA NIM" if selected_mode == "nvidia" else
                      "Hosted model" if selected_hosted else
                      "Unsupported provider" if unsupported_provider else "Muse Spark")
     if selected_hosted:
@@ -1194,7 +1194,7 @@ def store_validated_report(wrapper, titles, *, kind):
             if (not isinstance(wrapper, dict) or wrapper.get("source") != "hosted_model"
                     or wrapper.get("is_mock") is not False
                     or wrapper.get("model") != provider.get("model")
-                    or (selected_mode == "bluesminds" and wrapper.get("provider") != "Bluesminds")):
+                    or (selected_mode == "nvidia" and wrapper.get("provider") != "NVIDIA NIM")):
                 raise RuntimeError("Selected hosted provider returned mismatched provenance.")
         else:
             wrapper = ask_muse.enforce_report_provenance(wrapper, kind)
@@ -1372,6 +1372,8 @@ if current_report:
                    f"model: {wrapper.get('model')}; validated at: "
                    f"{wrapper.get('validated_at_utc', 'unknown')}. "
                    "Treat this text as hypotheses, not evidence.")
+        if wrapper.get("model_catalog_status") not in (None, "not_applicable"):
+            st.caption(f"NVIDIA model catalog check: {wrapper['model_catalog_status']}; model identity remains unverified.")
     for section in wrapper["structured"]["sections"]:
         st.markdown(f"**{section['title']}**")
         st.text(section["content"])
@@ -1485,12 +1487,14 @@ with st.expander("Hosted model (explicit configuration and consent)"):
         if st.button("Test hosted API connectivity", key="hosted_connectivity"):
             try:
                 with st.spinner("Testing hosted API connectivity..."):
-                    hosted_model_provider.check_connectivity(confirmed=hosted_consent)
+                    catalog_status = hosted_model_provider.check_connectivity(confirmed=hosted_consent)
                 previous = st.session_state.get("hosted_verification", {})
                 same_config = previous.get("fingerprint") == hosted_fingerprint
                 st.session_state["hosted_verification"] = {"fingerprint": hosted_fingerprint, "connectivity": True,
                                                             "generation": bool(previous.get("generation")) if same_config else False}
                 st.success("Hosted endpoint returned a nonempty response; model identity and charges remain unverified.")
+                if selected_mode == "nvidia":
+                    st.caption(f"NVIDIA model catalog check: {catalog_status}.")
             except (ValueError, RuntimeError) as exc:
                 st.error(f"Hosted connectivity test unavailable: {exc}")
         if st.button("Generate hosted model interpretation", key="hosted_generate_button"):
@@ -1539,6 +1543,8 @@ with st.expander("Hosted model (explicit configuration and consent)"):
             st.success("Hosted response received and structurally checked; scientific interpretation remains unverified.")
             st.caption(f"Provider: {hosted_wrapper['provider']}; model: {hosted_wrapper['model']}. "
                        "A successful response does not verify entitlement, credits or semantic claim support.")
+            if hosted_wrapper.get("model_catalog_status") not in (None, "not_applicable"):
+                st.caption(f"NVIDIA model catalog check: {hosted_wrapper['model_catalog_status']}; model identity remains unverified.")
             st.caption(hosted_wrapper["numeric_guard"]["limitations"])
             for section in hosted_wrapper["structured"]["sections"]:
                 st.markdown(f"**{section['title']}**")

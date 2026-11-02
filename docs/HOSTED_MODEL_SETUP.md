@@ -1,6 +1,6 @@
 # Optional user-configured hosted model
 
-This adapter is separate from Muse Spark/Baseten, local Llama/Ollama, and the
+The generic hosted mode is separate from Muse Spark/Baseten, NVIDIA NIM, local Llama/Ollama, and the
 explicitly labelled offline mock. It defaults to the requested model identifier
 `meta-models/Muse-Glimmer-30B`, **not a verified model/provider contract**. No
 endpoint is included. Obtain and independently verify the official hackathon
@@ -8,7 +8,7 @@ provider's OpenAI-compatible HTTPS base URL, exact model ID, API key, usage
 terms, credit balance and whether billing can occur. A default identifier or
 configured key is not evidence of access, authenticity or free inference.
 
-The adapter reads **process environment variables only**; it does not read the
+The generic hosted mode reads **process environment variables only**; it does not read the
 project `.env` file. Do not paste keys into chat, screenshots, source, exports
 or logs. Set them privately in the same terminal/process that starts Streamlit.
 
@@ -57,14 +57,17 @@ model name in provenance is a **requested identifier**, not independent model
 verification. If an endpoint supplies a different response model identifier,
 the report is rejected rather than mislabelled.
 
-## Bluesminds mode
+## NVIDIA NIM mode
 
-Set `LABLENS_AI_PROVIDER=bluesminds` and `BLUESMINDS_API_KEY` privately in
-the Streamlit process environment. Defaults are `https://api.bluesminds.com/v1`,
-`meta/muse-glimmer-30b`, and 512 output tokens. `LABLENS_BASE_URL`,
-`LABLENS_MODEL`, `LABLENS_MAX_OUTPUT_TOKENS`, and `LABLENS_TIMEOUT_SECONDS`
-can override these. See README for Windows setup and troubleshooting. This
-mode sends `reasoning_effort=none`, temperature 0.2, and top_p 1. It never
-uses reasoning content as a final answer. No live access is verified.
-The explicit connectivity test sends one potentially billable request without
-analysis data; consent is required. There are no automatic retries.
+Select `LABLENS_AI_PROVIDER=nvidia` in the process environment. Configure
+`NVIDIA_API_KEY` and the exact `NVIDIA_MODEL` from NVIDIA's catalog in the
+process environment or the external file `F:\meta-hacathon.env` on Windows;
+on other platforms the fallback is `meta-hacathon.env` in the repo's parent.
+Process values (including blank) take precedence, and `LABLENS_DISABLE_DOTENV=1`
+disables the external file. The NVIDIA endpoint is fixed to
+`https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.
+There is no default model. See README for setup and model-list validation.
+
+No NVIDIA live access, model identity or billing has been verified by tests.
+The old Bluesminds mode is no longer selectable; an old selection fails closed.
+This note preserves migration history without silently changing providers.
