@@ -46,7 +46,8 @@ not hardcode those column names or units.
 
 The general app's sidebar links navigate to sections of one continuous A–G
 analysis, keeping the existing controls and session state together. The
-highlight follows the last selected section link. The overview describes the
+highlight follows the last selected section link, not scroll position. The dark
+overview describes the
 current dataset, computed fit and provider configuration; it does not imply a
 live provider check or retain a history of past analyses. Use the native sidebar
 control to collapse it on smaller screens. The upload limit is 5 MiB and the
@@ -57,6 +58,8 @@ The visual system is centralized in `ui/theme.css`, `ui_components.py` and
 `.streamlit/config.toml`. AI report text is shown only after the existing
 validation; streamed provider responses are buffered, not displayed as partial
 or internal reasoning. Live calls and agent execution remain explicit actions.
+“Start New Analysis” navigates to the existing upload controls; it does not
+reset the current session.
 
 ### Quick synthetic demo (no API key or upload)
 

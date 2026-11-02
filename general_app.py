@@ -218,6 +218,8 @@ with st.sidebar:
 
 ui_components.hero()
 overview_slot = st.empty()
+with overview_slot.container():
+    ui_components.overview_empty()
 st.caption("A reproducible workspace for delimited numeric data. Choose your variables and review the assumptions; no scientific domain is inferred.")
 with st.expander("First time here? Quick start"):
     st.markdown(
@@ -721,24 +723,28 @@ else:
         st.session_state.pop("ai_state", None)
 result["ai"] = None
 
-# Overview reflects the current computation only; it is not a history or a live probe.
-current_state = st.session_state.get("ai_state") or {}
-active_kind_overview = current_state.get("active")
-if active_kind_overview == "live":
-    report_note = "A validated AI report is available for this analysis."
-elif active_kind_overview == "mock":
-    report_note = "A labelled offline mock report is available."
-else:
-    report_note = "No report in F · Interpret; analysis history is not stored."
-provider_note = ("Connectivity checked in this session." if selected_hosted and live_state.get("connectivity")
-                 else "Live connectivity not verified by this overview.")
-with overview_slot.container():
-    ui_components.overview(source_name, len(frame), len(frame.columns), provider=selected_name,
-                           provider_note=provider_note,
-                           fit_note="Fit computed" if fit.success else "Fit unavailable",
-                           report_note=report_note,
-                           source_note="Uploaded dataset" if uploaded is not None else "Bundled example")
+# Render into the earlier slot using current session facts, never a history or live probe.
+def render_overview():
+    current_state = st.session_state.get("ai_state") or {}
+    active_kind_overview = current_state.get("active")
+    if active_kind_overview == "live":
+        report_note = "A validated AI report is available for this analysis."
+    elif active_kind_overview == "mock":
+        report_note = "A labelled offline mock report is available."
+    else:
+        report_note = "No report in F · Interpret; analysis history is not stored."
+    provider_note = ("Connectivity checked in this session." if selected_hosted and live_state.get("connectivity")
+                     else "Live connectivity not verified by this overview.")
+    with overview_slot.container():
+        ui_components.overview(source_name, len(frame), len(frame.columns), provider=selected_name,
+                               provider_note=provider_note,
+                               fit_note="Fit computed" if fit.success else "Fit unavailable",
+                               report_note=report_note,
+                               source_note="Uploaded dataset" if uploaded is not None else "Bundled example",
+                               pairs=len(x_values), model=MODEL_SPECS[model_name]["label"])
 
+
+render_overview()
 
 # Deterministic summaries are shown before the detailed analysis tables.
 st.subheader("Key insights")
@@ -802,19 +808,21 @@ with outlier_col:
     else:
         st.caption(outliers.get("reason", "Not enough observations."))
 
-st.write(f"**{chart_spec.label}**")
-if chart_spec.valid:
-    try:
-        st.altair_chart(chart_spec.chart, width="stretch")
-    except Exception as exc:
-        st.error(f"Could not render the interactive chart: {_safe_error(exc)}")
+with st.container(border=True):
+    st.caption("VISUALIZATION · CURRENT ANALYSIS")
+    st.write(f"**{chart_spec.label}**")
+    if chart_spec.valid:
         try:
-            st.image(render_png(plot_type, chart_frame, chart_config),
-                     caption="Local PNG fallback", width="stretch")
-        except Exception as fallback_exc:
-            st.info(f"PNG fallback also failed: {_safe_error(fallback_exc)}")
-else:
-    st.info(chart_spec.reason)
+            st.altair_chart(chart_spec.chart, width="stretch")
+        except Exception as exc:
+            st.error(f"Could not render the interactive chart: {_safe_error(exc)}")
+            try:
+                st.image(render_png(plot_type, chart_frame, chart_config),
+                         caption="Local PNG fallback", width="stretch")
+            except Exception as fallback_exc:
+                st.info(f"PNG fallback also failed: {_safe_error(fallback_exc)}")
+    else:
+        st.info(chart_spec.reason)
 for warning in chart_spec.warnings:
     st.warning(warning)
 for note in chart_spec.notes:
@@ -1122,6 +1130,7 @@ st.caption(
     "them before requesting AI. No provider request occurs on startup."
 )
 st.caption(f"Provider status: {provider['message']}")
+ui_components.assistant_intro(selected_name, provider.get("model") or "Model not configured")
 
 
 def _ai_state():
@@ -1412,6 +1421,9 @@ else:
     st.caption("No report has been generated. The app works fully without an API key; "
                "the offline MOCK is always labelled as a mock.")
 
+
+# An explicit report action above may have changed the current session state.
+render_overview()
 
 with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
     st.caption("Local inference uses the Ollama service on this application's machine, not the browser's machine. "
