@@ -301,3 +301,35 @@ def test_workspace_escapes_dataset_names_in_summary():
     assert "&lt;img src=x onerror=alert(1)&gt;.csv" in markup
     assert '<img src=x onerror=alert(1)>' not in markup
     assert "Uploaded dataset" in markup
+
+
+def test_dashboard_uses_current_computed_facts_and_assistant_provenance():
+    at = run_app()
+    assert not at.exception
+    markup = "\n".join(item.value for item in at.markdown)
+    assert "Welcome to" in markup and "LabLens AI." in markup
+    assert "11 <small>rows</small>" in markup
+    assert "Current X / Y selection" in markup
+    assert "Fit computed" in markup
+    assert "Python calculations remain authoritative" in markup
+    assert "No report in F" in markup
+    assert "Start New Analysis" in markup and "current analysis is not reset" in markup
+
+
+def test_dashboard_shows_empty_state_when_upload_cannot_be_parsed():
+    at = run_app()
+    at.file_uploader[0].set_value(("empty.csv", b"", "text/csv")).run()
+    assert not at.exception
+    markup = "\n".join(item.value for item in at.markdown)
+    assert "No analysis ready yet" in markup
+    assert "Analysis history is not stored" in markup
+    assert any("empty" in item.value.lower() for item in at.error)
+
+
+def test_overview_updates_after_explicit_mock_report():
+    at = run_app()
+    at.button[1].click().run()
+    assert not at.exception
+    markup = "\n".join(item.value for item in at.markdown)
+    assert "A labelled offline mock report is available." in markup
+    assert "OFFLINE MOCK report" in markup
