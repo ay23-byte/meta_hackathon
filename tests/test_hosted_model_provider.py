@@ -29,7 +29,7 @@ def clear_hosted_env(monkeypatch, tmp_path):
     # Tests must never read a developer's external credentials.
     monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", tmp_path / "absent.env")
     for key in ("LABLENS_AI_PROVIDER", "LABLENS_API_KEY", "LABLENS_BASE_URL", "LABLENS_MODEL",
-                "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", "NVIDIA_API_KEY", "NVIDIA_MODEL"):
+                "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS", "LABLENS_NVIDIA_STREAM", "NVIDIA_API_KEY", "NVIDIA_MODEL"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -537,3 +537,82 @@ def test_nvidia_sdk_uses_chat_completions_endpoint_offline(monkeypatch):
     assert body["temperature"] == 0.2 and body["top_p"] == 1
     assert SECRET not in json.dumps(result)
     client.close()
+
+
+def _chunk(content=None, *, reason=None, model=TEST_MODEL, reasoning=None, refusal=None):
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning, refusal=refusal)
+    return SimpleNamespace(model=model, choices=[SimpleNamespace(index=0, delta=delta, finish_reason=reason)])
+
+
+def _stream_client(monkeypatch, chunks):
+    calls = []
+    def factory(**kwargs):
+        def create(**request):
+            calls.append(request)
+            return iter(chunks)
+        return SimpleNamespace(models=fake_catalog(), chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    return calls
+
+
+def test_nvidia_stream_buffers_content_and_validates(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    raw = json.dumps(report())
+    calls = _stream_client(monkeypatch, [_chunk(None, reasoning="never display"), _chunk(raw[:30]),
+                                       _chunk(raw[30:], reason="stop", reasoning="private")])
+    result = hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert calls[0]["stream"] is True and calls[0]["model"] == TEST_MODEL
+    assert result["structured"] == report() and "private" not in json.dumps(result)
+    assert result["source"] == "hosted_model" and result["model_catalog_status"] == "verified"
+
+
+@pytest.mark.parametrize("chunks, expected", [
+    ([_chunk(reasoning="secret reasoning", reason="stop")], "no visible"),
+    ([_chunk("incomplete")], "without a final completion"),
+    ([_chunk("partial", reason="length")], "truncated"),
+    ([_chunk("some", model="different", reason="stop")], "different model"),
+    ([_chunk(refusal="private refusal", reason="stop")], "declined"),
+    ([_chunk("{}", reason="stop")], "schema"),
+])
+def test_nvidia_stream_rejects_invalid_without_reasoning_leak(monkeypatch, chunks, expected):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    _stream_client(monkeypatch, chunks)
+    with pytest.raises(RuntimeError, match=expected) as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert "secret reasoning" not in str(error.value) and "private refusal" not in str(error.value)
+
+
+def test_nvidia_stream_iteration_failure_does_not_return_partial(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    def chunks():
+        yield _chunk("partial response")
+        raise TimeoutError(SECRET)
+    _stream_client(monkeypatch, chunks())
+    with pytest.raises(RuntimeError, match="timed out") as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert SECRET not in str(error.value) and "partial response" not in str(error.value)
+
+
+def test_nvidia_stream_setting_is_validated_and_fingerprint_bound(monkeypatch):
+    configure_nvidia(monkeypatch)
+    previous = hosted.configuration_fingerprint()
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    assert hosted.configuration_fingerprint() != previous
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "true")
+    calls = fake_client(monkeypatch)
+    with pytest.raises(ValueError, match="LABLENS_NVIDIA_STREAM"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    assert not calls
+
+
+def test_nvidia_stream_rejects_invalid_evidence(monkeypatch):
+    configure_nvidia(monkeypatch)
+    monkeypatch.setenv("LABLENS_NVIDIA_STREAM", "1")
+    candidate = report()
+    candidate["claims"][0]["evidence_ids"] = ["invented.evidence"]
+    _stream_client(monkeypatch, [_chunk(json.dumps(candidate), reason="stop")])
+    with pytest.raises(RuntimeError, match="evidence"):
+        hosted.generate_interpretation(CONTEXT, confirmed=True)

@@ -30,7 +30,7 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
 NVIDIA_MODEL_ENV = "NVIDIA_MODEL"
 # Explicit Windows location requested by the user; portable sibling equivalent elsewhere.
-NVIDIA_ENV_FILE = Path(r"F:\meta-hacathon.env") if os.name == "nt" else ROOT.parent / "meta-hacathon.env"
+NVIDIA_ENV_FILE = Path(r"F:\meta-hacathon\.env") if os.name == "nt" else ROOT.parent / ".env"
 
 KEY_ENV = "BASETEN_API_KEY"
 MODEL_ENV = "BASETEN_MODEL"
