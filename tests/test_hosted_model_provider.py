@@ -690,7 +690,7 @@ def test_provider_selection_process_precedence_and_file_fingerprint(monkeypatch,
     env_file.write_text("LABLENS_AI_PROVIDER=unknown\n", encoding="utf-8")
     assert provider_config.selected_ai_provider() == "unknown"
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
-    assert provider_config.selected_ai_provider() == ""
+    assert provider_config.selected_ai_provider() == "nvidia"
 
 
 def test_provider_change_clears_stale_error_without_call(monkeypatch, tmp_path):

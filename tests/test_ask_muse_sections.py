@@ -91,7 +91,7 @@ def test_custom_sections_pass_through_generate_interpretation(monkeypatch):
     message = types.SimpleNamespace(content=content, model_extra={})
     response = types.SimpleNamespace(
         choices=[types.SimpleNamespace(message=message, finish_reason="stop")],
-        model="test-model",
+        model=ask_muse.MODEL,
     )
 
     class FakeClient:
@@ -108,3 +108,9 @@ def test_custom_sections_pass_through_generate_interpretation(monkeypatch):
     monkeypatch.setattr(ask_muse, "OpenAI", FakeClient)
     result = ask_muse.generate_interpretation({"results": {"n": 3}}, section_titles=titles)
     assert [s["title"] for s in result["structured"]["sections"]] == titles
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

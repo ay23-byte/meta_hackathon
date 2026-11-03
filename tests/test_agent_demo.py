@@ -41,6 +41,7 @@ def test_all_cases_in_strict_mode(tmp_path, capsys):
 
 
 def test_ai_flag_without_key_falls_back_to_offline(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     assert run_agent_demo.main(["--case", "a", "--use-ai", "--strict",
                                 "--output-dir", str(tmp_path)]) == 0

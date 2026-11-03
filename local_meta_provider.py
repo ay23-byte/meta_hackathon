@@ -28,6 +28,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _request(path: str, payload: dict | None = None, *, timeout: int = TIMEOUT) -> dict:
+    if provider_config.selected_ai_provider() != "ollama":
+        raise RuntimeError("Ollama is not the selected provider; no local request was made.")
     if path not in ("/api/tags", "/api/chat"):
         raise ValueError("Unsupported Ollama API path.")
     body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8") if payload is not None else None
@@ -117,6 +119,8 @@ def generate_scientific_report(context: dict, section_titles=None, *, profile=as
     prompt = ask_muse.build_prompt(context, titles, profile=profile).replace(
         "You are Muse Spark, an assistant for scientific experiment analysis.",
         f"You are {SUPPORTED_MODELS[model]}, a local assistant for scientific experiment analysis.", 1)
+    if provider_config.redact(prompt) != prompt:
+        raise ValueError("Analysis context contains credential material; no local request was made.")
     allowed_ids = ask_muse._allowed_evidence_ids(context.get("result_ids"))
     schema = _report_schema(titles, sorted(allowed_ids) if allowed_ids else None)
     status = check_ollama_status(model)
@@ -133,6 +137,8 @@ def generate_scientific_report(context: dict, section_titles=None, *, profile=as
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Ollama returned no visible report content.")
+    if provider_config.redact(content) != content:
+        raise RuntimeError("Local output contains credential material; no report was stored.")
     structured = ask_muse.validate_report(content, titles, profile=profile,
                                           allowed_evidence_ids=context.get("result_ids"))
     if structured is None:

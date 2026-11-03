@@ -186,3 +186,9 @@ def test_plan_budget_is_local_to_request(monkeypatch):
     monkeypatch.setattr(ask_muse, "_completion_request", capture)
     planner.request_agent_plan(quality(), registry_manifest())
     assert seen == [(planner.MAX_PLAN_TOKENS, ask_muse.MAX_COMPLETION_TOKENS)]
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

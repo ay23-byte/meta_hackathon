@@ -1,6 +1,6 @@
 """Bounded analysis orchestrator.
 
-Flow: inspect -> (Muse Spark or offline) plan -> strict validation -> execute
+Flow: inspect -> (selected provider or offline) plan -> strict validation -> execute
 allowlisted tools -> observe -> deterministic diagnostics -> bounded retry ->
 grounded interpretation -> audit trail. All numbers come from tool outputs.
 """
@@ -56,7 +56,7 @@ class AnalysisOrchestrator:
     def __init__(self, config: OrchestratorConfig | None = None, **kwargs):
         self.config = config or OrchestratorConfig(**kwargs)
         if self.config.use_ai is None:
-            self.config.use_ai = bool(provider_config.get_api_key())
+            self.config.use_ai = False
 
     # ------------------------------------------------------------------
     def run(self, load, frame: pd.DataFrame | None = None) -> AgentRun:
@@ -304,8 +304,8 @@ class AnalysisOrchestrator:
                     raw = planner.request_agent_plan(
                         quality, research_question=research_question
                     )
-                candidate_source = ("muse_spark" if self.config.plan_provider is not None
-                                    else {"nvidia": "nvidia_nim", "ollama": "ollama"}.get(
+                candidate_source = ("injected" if self.config.plan_provider is not None
+                                    else {"nvidia": "nvidia_nim", "ollama": "ollama", "hosted": "hosted"}.get(
                                         provider_config.selected_ai_provider(), "muse_spark"))
             except Exception as exc:
                 run.log(phase="plan", actor="ai", status="unavailable",
@@ -317,8 +317,16 @@ class AnalysisOrchestrator:
             candidate_source = "deterministic_fallback"
 
         validation = planner.validate_plan(raw)
+        plan_digest = {"plan": raw}
+        if not candidate_source.startswith("deterministic"):
+            if self.config.plan_provider is not None:
+                plan_digest["provider"] = "injected"
+                plan_digest["model"] = None
+            else:
+                plan_digest["provider"] = provider_config.selected_ai_provider()
+                plan_digest["model"] = provider_config.redact(provider_config.get_model())[:200]
         run.log(phase="plan", actor="ai" if not candidate_source.startswith("deterministic") else "deterministic",
-                status="ok", result_digest={"plan": raw},
+                status="ok", result_digest=plan_digest,
                 decision="AI plan proposed" if not candidate_source.startswith("deterministic")
                          else "deterministic plan generated")
         if not validation.accepted:

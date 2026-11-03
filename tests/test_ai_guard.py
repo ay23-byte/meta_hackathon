@@ -1,6 +1,8 @@
 """The numeric guard is bounded and never claims general fact checking."""
+
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import ask_muse
@@ -50,3 +52,9 @@ def test_ui_rejects_fabricated_fit_number_without_losing_deterministic_results(m
     assert any("Report rejected" in error.value for error in app.error)
     assert len(app.get("download_button")) == 3
     assert any("Slope =" in item.value for item in app.text)
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

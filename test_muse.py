@@ -28,6 +28,8 @@ pytestmark = pytest.mark.live
 
 
 def _require_key() -> str:
+    if provider_config.selected_ai_provider() != "baseten":
+        pytest.skip("Live Muse Spark tests require LABLENS_AI_PROVIDER=baseten; no other provider key is sent to Baseten.")
     status = provider_config.api_key_status()
     if not status["present"]:
         pytest.skip(

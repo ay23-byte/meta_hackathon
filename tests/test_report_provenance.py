@@ -262,3 +262,9 @@ def test_legacy_app_does_not_reuse_a_mock_as_a_live_report(monkeypatch):
     assert any("Muse Spark report" in text for text in values(at, "markdown"))
     assert at.session_state["lablens_ai_report"]["source"] == \
         ask_muse.LIVE_REPORT_SOURCE
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

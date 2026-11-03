@@ -18,7 +18,7 @@ def test_legacy_adapter_never_calls_baseten_for_another_selection(monkeypatch, m
     if mode not in ("nvidia", "ollama"):
         with pytest.raises(agent_planner.PlannerUnavailable):
             agent_planner.request_agent_plan({})
-    if mode in ("nvidia", "ollama"):
+    if mode in ("nvidia", "ollama", "hosted"):
         # With no executed evidence there can be no provider report request.
         assert agent_planner.generate_grounded_interpretation({}) is None
     else:
@@ -41,7 +41,7 @@ def test_cli_unsupported_selection_preserves_analysis_without_using_baseten(monk
     assert (tmp_path / "results.json").exists()
 
 
-@pytest.mark.parametrize("mode", ["nvidia", "ollama", "baseten"])
+@pytest.mark.parametrize("mode", [None, "nvidia", "ollama", "baseten"])
 def test_cli_routes_selected_provider_and_preserves_provenance(monkeypatch, tmp_path, mode):
     from pathlib import Path
 
@@ -49,7 +49,11 @@ def test_cli_routes_selected_provider_and_preserves_provenance(monkeypatch, tmp_
     import hosted_model_provider
     import local_meta_provider
 
-    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    if mode is None:
+        monkeypatch.delenv("LABLENS_AI_PROVIDER", raising=False)
+        mode = "nvidia"
+    else:
+        monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
     monkeypatch.setenv("BASETEN_API_KEY", "unit-test-baseten-fake")
     calls = []
 
@@ -57,7 +61,8 @@ def test_cli_routes_selected_provider_and_preserves_provenance(monkeypatch, tmp_
         calls.append((mode, kwargs))
         wrapper = ask_muse.generate_mock_report(context, titles, profile=profile)
         wrapper.update(source={"nvidia": "hosted_model", "ollama": "local_ollama", "baseten": "live_provider"}[mode],
-                       model="test-model", is_mock=False, provider="test-provider")
+                       model={"nvidia": "meta/muse-glimmer-30b", "ollama": "llama3.2:1b", "baseten": "test-model"}[mode],
+                       is_mock=False, provider={"nvidia": "NVIDIA NIM", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"], "baseten": "Baseten"}[mode])
         return wrapper
 
     def adapter(name):

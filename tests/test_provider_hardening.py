@@ -298,7 +298,7 @@ def test_agent_requires_explicit_consent_on_every_rerun():
     at = run_general_app()
     labels = [widget.label for widget in at.checkbox]
     assert any("Run the bounded analysis agent" in label for label in labels)
-    assert any("Let Muse Spark propose the plan" in label for label in labels)
+    assert any("Allow selected provider" in label for label in labels)
     assert len({label for label in labels if "Muse Spark" in label or "agent" in label}) >= 2
     assert "Agent state" not in {metric.label for metric in at.metric}
     at.run()
@@ -358,13 +358,14 @@ def test_selected_dotenv_override_and_cache_invalidation(tmp_path, monkeypatch):
 
 
 def test_disabled_dotenv_never_reads_selected_file(monkeypatch, tmp_path):
+    monkeypatch.delenv("LABLENS_AI_PROVIDER", raising=False)
     monkeypatch.setattr(provider_config, "ENV_FILE", tmp_path / ".env")
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
     monkeypatch.setattr(provider_config, "dotenv_values", lambda *a, **kw: pytest.fail("dotenv read while disabled"))
     provider_config.reload_dotenv()
     assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
     assert provider_config.get_api_key() is None
-    assert provider_config.selected_ai_provider() == ""
+    assert provider_config.selected_ai_provider() == "nvidia"
     assert provider_config.redact("safe message") == "safe message"
 
 
@@ -479,3 +480,9 @@ def test_nvidia_invalid_key_never_constructs_mocked_client(monkeypatch, fake_nvi
     with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
         hosted.generate_interpretation(NVIDIA_CONTEXT, confirmed=True)
     assert len(fake_nvidia_provider["requests"]) == 0
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

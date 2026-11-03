@@ -116,7 +116,7 @@ def test_two_different_valid_ai_plans_produce_different_tool_sequences():
 
     first = with_plan(ai_plan(first_tool="outlier_scan"))
     second = with_plan(ai_plan(first_tool="profile_columns"))
-    assert first["plan_source"] == second["plan_source"] == "muse_spark"
+    assert first["plan_source"] == second["plan_source"] == "injected"
     assert first["plan_hash"] != second["plan_hash"]
     assert "outlier_scan" in tools(first) and "outlier_scan" not in tools(second)
     assert "profile_columns" in tools(second) and "profile_columns" not in tools(first)

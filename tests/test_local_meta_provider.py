@@ -14,6 +14,11 @@ CONTEXT = {"result_ids": ["fit.linear"], "evidence_index": {"fit.linear": {"slop
                    "metrics": {"r2": 1.0, "rmse": 0.0}, "n_observations": 12}}
 
 
+@pytest.fixture(autouse=True)
+def select_local_provider(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
+
+
 def stub_report():
     return ask_muse.generate_mock_report(CONTEXT, profile="legacy")["structured"]
 
@@ -94,6 +99,7 @@ def test_network_failures_and_timeout_are_safe(monkeypatch):
 
 
 def test_ui_never_calls_ollama_until_explicit_button(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
     calls = []
     def fake(context, titles, profile, model):
         calls.append(context)
@@ -176,6 +182,7 @@ def test_selected_3b_model_is_checked_used_and_recorded(monkeypatch):
 
 
 def test_ui_switching_model_marks_local_report_stale(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
     calls = []
     def fake(context, titles, profile, model):
         calls.append(model)

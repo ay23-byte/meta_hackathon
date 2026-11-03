@@ -8,7 +8,7 @@ from pathlib import Path
 
 def test_provider_import_is_offline_and_does_not_load_dotenv_into_environment(tmp_path):
     env_file = tmp_path / "local.env"
-    env_file.write_text("BASETEN_API_KEY=unit-import-fake-key\n", encoding="utf-8")
+    env_file.write_text("LABLENS_AI_PROVIDER=baseten\nBASETEN_API_KEY=unit-import-fake-key\n", encoding="utf-8")
     env = os.environ.copy()
     env.pop("BASETEN_API_KEY", None)
     env.pop("BASETEN_MODEL", None)

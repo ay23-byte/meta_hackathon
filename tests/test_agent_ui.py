@@ -86,7 +86,7 @@ def test_agent_ai_requires_button_on_each_rerun(monkeypatch, mode):
     monkeypatch.setattr(agent_planner, "generate_grounded_interpretation", lambda digest: None)
     at = run_app()
     next(c for c in at.checkbox if c.label.startswith("Run the bounded analysis agent")).check().run()
-    next(c for c in at.checkbox if c.label.startswith("Let Muse Spark propose")).check().run()
+    next(c for c in at.checkbox if c.label.startswith("Allow selected provider")).check().run()
     assert calls == []
     next(b for b in at.button if b.label == "Run agent AI now").click().run()
     assert calls == [mode]

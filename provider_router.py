@@ -9,16 +9,32 @@ import ask_muse
 import provider_config
 
 
+def _contains_secret(value) -> bool:
+    """Inspect context and output strings without rendering secrets in errors."""
+    if isinstance(value, str):
+        return provider_config.redact(value) != value
+    if isinstance(value, dict):
+        return any(_contains_secret(key) or _contains_secret(item) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_secret(item) for item in value)
+    return False
+
+
 class UnsupportedProviderError(ValueError):
     """The selected provider is not available in this router."""
 
 
 def generate_interpretation(context: dict, section_titles=None, *,
                             profile=ask_muse.DEFAULT_REPORT_PROFILE,
-                            confirmed: bool = False) -> dict:
+                            confirmed: bool = False, model: str | None = None) -> dict:
     """Dispatch a live report to the selected adapter, preserving provenance."""
     mode = provider_config.selected_ai_provider()
-    if mode == "nvidia":
+    # Build once before dispatch to enforce existing prompt limits and detect
+    # credentials in the original values, including JSON-escaped strings.
+    ask_muse.build_prompt(context, section_titles, profile=profile)
+    if _contains_secret(context):
+        raise ValueError("Analysis context contains credential material; no provider request was made.")
+    if mode in ("nvidia", "hosted"):
         import hosted_model_provider
 
         wrapper = hosted_model_provider.generate_interpretation(
@@ -28,21 +44,32 @@ def generate_interpretation(context: dict, section_titles=None, *,
         import local_meta_provider
 
         wrapper = local_meta_provider.generate_scientific_report(
-            context, section_titles, profile=profile, model=provider_config.get_ollama_model())
+            context, section_titles, profile=profile, model=model or provider_config.get_ollama_model())
         expected_source = "local_ollama"
-    elif mode in ("", "baseten"):
+    elif mode == "baseten":
         if not provider_config.get_api_key():
             raise RuntimeError("BASETEN_API_KEY is not configured; deterministic analysis remains available.")
-        if profile == ask_muse.DEFAULT_REPORT_PROFILE:
+        if profile == ask_muse.DEFAULT_REPORT_PROFILE and section_titles is None:
+            wrapper = ask_muse.generate_interpretation(context)
+        elif profile == ask_muse.DEFAULT_REPORT_PROFILE:
             wrapper = ask_muse.generate_interpretation(context, section_titles=section_titles)
         else:
             wrapper = ask_muse.generate_interpretation(context, section_titles=section_titles, profile=profile)
-        return ask_muse.enforce_report_provenance(wrapper, "live")
+        wrapper = ask_muse.enforce_report_provenance(wrapper, "live")
+        expected_source = ask_muse.LIVE_REPORT_SOURCE
     else:
         raise UnsupportedProviderError("Unsupported provider selection; no provider was called.")
     if (not isinstance(wrapper, dict) or wrapper.get("is_mock") is not False
             or wrapper.get("source") != expected_source):
         raise RuntimeError("Selected provider returned invalid provenance.")
+    if _contains_secret(wrapper):
+        raise RuntimeError("Provider output contains credential material and was rejected.")
+    if mode == "nvidia" and (wrapper.get("provider") != "NVIDIA NIM"
+                             or wrapper.get("model") != provider_config.get_nvidia_model()):
+        raise RuntimeError("Selected NVIDIA provider returned mismatched provenance.")
+    if mode == "ollama" and (wrapper.get("model") != (model or provider_config.get_ollama_model())
+                             or wrapper.get("provider") != local_meta_provider.SUPPORTED_MODELS.get(wrapper.get("model"))):
+        raise RuntimeError("Selected Ollama provider returned mismatched provenance.")
     return wrapper
 
 
@@ -60,7 +87,7 @@ def request_plan(prompt: str, *, max_tokens: int, confirmed: bool = False) -> st
     if provider_config.redact(prompt) != prompt:
         raise ValueError("Planning context contains credential material.")
     mode = provider_config.selected_ai_provider()
-    if mode == "nvidia":
+    if mode in ("nvidia", "hosted"):
         import hosted_model_provider
 
         config = hosted_model_provider._config()
@@ -84,7 +111,7 @@ def request_plan(prompt: str, *, max_tokens: int, confirmed: bool = False) -> st
             raise RuntimeError("Ollama returned an incomplete plan.")
         message = response.get("message")
         content = message.get("content") if isinstance(message, dict) else None
-    elif mode in ("", "baseten"):
+    elif mode == "baseten":
         provider_config.require_baseten_selection()
         key = provider_config.get_api_key()
         if not key:

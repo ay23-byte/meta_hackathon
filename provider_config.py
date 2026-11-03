@@ -147,12 +147,39 @@ def selected_ai_provider() -> str:
     values = _read_dotenv()
     if AI_PROVIDER_ENV in values:
         return values[AI_PROVIDER_ENV].strip().lower() or "invalid-empty-provider"
-    return ""
+    return "nvidia"
 
+
+
+def get_provider() -> str:
+    """Return an explicitly supported provider or reject the configuration."""
+    mode = selected_ai_provider()
+    if mode not in ("nvidia", "baseten", "ollama", "hosted"):
+        raise ValueError("Unsupported LABLENS_AI_PROVIDER; no provider was called.")
+    return mode
+
+
+def get_api_env() -> str:
+    return {"nvidia": NVIDIA_KEY_ENV, "baseten": KEY_ENV, "ollama": "", "hosted": "LABLENS_API_KEY"}[get_provider()]
+
+
+def get_model_env() -> str:
+    return {"nvidia": NVIDIA_MODEL_ENV, "baseten": MODEL_ENV, "ollama": "OLLAMA_MODEL", "hosted": "LABLENS_MODEL"}[get_provider()]
+
+
+def get_base_url() -> str:
+    mode = get_provider()
+    if mode == "nvidia":
+        return NVIDIA_BASE_URL
+    if mode == "baseten":
+        return BASE_URL
+    if mode == "ollama":
+        return get_ollama_host()
+    return os.environ.get("LABLENS_BASE_URL", "").strip()
 
 def require_baseten_selection() -> None:
     """Fail closed before a legacy adapter can contact an unintended provider."""
-    if selected_ai_provider() not in ("", "baseten"):
+    if selected_ai_provider() != "baseten":
         raise RuntimeError("The selected provider cannot be used by the legacy Baseten adapter; no provider request was made.")
 
 
@@ -191,8 +218,9 @@ def api_key_status() -> dict:
     ``key`` is present only in this internal dict. Never serialize it to the
     UI, an export, a log, or ``provider_status()``.
     """
-    key = get_setting(KEY_ENV)
-    source = setting_source(KEY_ENV)
+    name = get_api_env()
+    key = (os.environ.get(name, "").strip() if selected_ai_provider() == "hosted" else get_setting(name)) if name else ""
+    source = setting_source(name) if name else "none"
     env_file_present = _nvidia_env_file().is_file() if dotenv_enabled() else False
     if not key:
         return {
@@ -226,9 +254,21 @@ def get_report_token_budget() -> int:
     return value
 
 
-def get_model() -> str:
-    """Return the configured model, honoring process-env precedence."""
+def get_baseten_model() -> str:
+    """Return the Baseten model independently of the selected provider."""
     return get_setting(MODEL_ENV, DEFAULT_MODEL)
+
+
+def get_model() -> str:
+    """Return the model configured for the selected provider."""
+    mode = get_provider()
+    if mode == "nvidia":
+        return get_nvidia_model()
+    if mode == "baseten":
+        return get_baseten_model()
+    if mode == "ollama":
+        return get_ollama_model()
+    return os.environ.get("LABLENS_MODEL", "meta-models/Muse-Glimmer-30B").strip()
 
 
 def get_ollama_model() -> str:

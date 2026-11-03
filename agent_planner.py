@@ -292,7 +292,7 @@ def grounding_check(text: str, results: list[dict]) -> dict:
 def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
     """Request a report from the selected provider, grounded in executed outputs."""
     mode = provider_config.selected_ai_provider()
-    if mode not in ("", "baseten", "nvidia", "ollama"):
+    if mode not in ("baseten", "nvidia", "ollama", "hosted"):
         raise RuntimeError("The selected provider is unsupported; no provider request was made.")
     results = audit_digest.get("tool_results") or []
     evidence = {f"tool.{i}": {"label": "Executed tool output", "output": item}

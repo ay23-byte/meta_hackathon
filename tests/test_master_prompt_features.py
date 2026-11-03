@@ -344,3 +344,9 @@ def test_demo_d_and_e_are_reproducible_offline(tmp_path, capsys):
     assert "NOT a Muse Spark response" in mock_text
     assert "NOT AI" in mock_text
     assert "3.25541" in mock_text  # computed slope from the synthetic case
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

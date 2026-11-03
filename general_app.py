@@ -25,6 +25,7 @@ import streamlit as st
 import ask_muse
 import hosted_model_provider
 import provider_config
+import provider_router
 import ui_components
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values, preview_cleaning
@@ -151,10 +152,11 @@ with st.sidebar:
     ui_components.navigation()
     selected_mode = provider_config.selected_ai_provider()
     selected_hosted = selected_mode in ("nvidia", "hosted")
-    unsupported_provider = bool(selected_mode and not selected_hosted)
+    unsupported_provider = selected_mode not in ("", "baseten", "nvidia", "hosted", "ollama")
     selected_name = ("NVIDIA NIM" if selected_mode == "nvidia" else
                      "Hosted model" if selected_hosted else
-                     "Unsupported provider" if unsupported_provider else "Muse Spark")
+                     "Unsupported provider" if unsupported_provider else
+                     "Local Ollama" if selected_mode == "ollama" else "Muse Spark")
     if selected_hosted:
         provider = hosted_model_provider.configuration_status()
         provider_fingerprint = hosted_model_provider.configuration_fingerprint()
@@ -172,14 +174,21 @@ with st.sidebar:
                    "connectivity does not prove report validity, billing, or model identity.")
         st.caption(provider["message"])
         st.caption("Use the hosted controls below for the explicit, potentially billable connectivity test.")
+    elif selected_mode == "ollama":
+        provider_fingerprint = _hash({"mode": "ollama", "model": provider_config.get_ollama_model(),
+                                      "host": provider_config.get_setting("OLLAMA_HOST", "http://127.0.0.1:11434")})
+        provider = {"message": "Local Ollama availability has not been checked.", "live_verified": False,
+                    "offline_mock_available": True}
+        st.caption("F · Interpret provider: local Ollama. Availability is not verified until requested.")
     elif unsupported_provider:
         provider_fingerprint = f"unsupported:{selected_mode}"
         provider = {"message": "Unsupported LABLENS_AI_PROVIDER; no provider will be called.",
                     "live_verified": False, "offline_mock_available": True}
         st.error(provider["message"])
     else:
-        provider_fingerprint = "legacy:muse_spark"
-        st.caption("F · Interpret provider: Muse Spark via Baseten (default; NVIDIA is not selected). "
+        provider_fingerprint = _hash({"provider": "baseten", "model": ask_muse.MODEL,
+                                      "key": hashlib.sha256((provider_config.get_api_key() or "").encode()).hexdigest()})
+        st.caption("F · Interpret provider: Muse Spark via Baseten. "
                    "Set LABLENS_AI_PROVIDER=nvidia in the process or project .env to use NVIDIA.")
         st.caption("Built with Muse Spark Open · Optional AI via https://inference.baseten.co/v1")
         provider = ask_muse.provider_status()
@@ -1218,7 +1227,11 @@ def _mock_request_failed(exc):
 def store_validated_report(wrapper, titles, *, kind):
     """Validate and store a report with explicit, action-appropriate provenance."""
     try:
-        if kind == "live" and selected_hosted:
+        if kind == "live" and selected_mode == "ollama":
+            if (not isinstance(wrapper, dict) or wrapper.get("source") != "local_ollama"
+                    or wrapper.get("is_mock") is not False or wrapper.get("model") != provider_config.get_ollama_model()):
+                raise RuntimeError("Selected local provider returned mismatched provenance.")
+        elif kind == "live" and selected_hosted:
             if (not isinstance(wrapper, dict) or wrapper.get("source") != "hosted_model"
                     or wrapper.get("is_mock") is not False
                     or wrapper.get("model") != provider.get("model")
@@ -1300,7 +1313,7 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         _live_request_failed(ValueError("Unsupported LABLENS_AI_PROVIDER; no provider was called."))
     elif selected_hosted and not hosted_f_consent:
         _live_request_failed(ValueError("Explicit hosted consent is required before sending analysis."))
-    elif not selected_hosted and not provider_config.get_api_key():
+    elif selected_mode in ("", "baseten") and not provider_config.get_api_key():
         if _current_report("mock"):
             st.warning("BASETEN_API_KEY is not set; a labelled OFFLINE MOCK is "
                        "available, but live Muse Spark requires a key. The MOCK "
@@ -1319,20 +1332,12 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         try:
             with st.spinner(f"Requesting {selected_name} report. Waiting for a complete, validated response; please keep this page open..."):
                 titles = list(effective_titles)
-                if selected_hosted:
-                    hosted_context = dict(context)
-                    if research_context is not None:
-                        hosted_context["user_supplied_research_context"] = research_context
-                    wrapper = hosted_model_provider.generate_interpretation(
-                        hosted_context, titles, profile=report_profile, confirmed=hosted_f_consent)
-                elif report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
-                    wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
-                else:
-                    wrapper = ask_muse.generate_interpretation(
-                        context, section_titles=titles, profile=report_profile
-                    )
-                if not selected_hosted:
-                    wrapper = ask_muse.enforce_report_provenance(wrapper, "live")
+                routed_context = dict(context)
+                if research_context is not None:
+                    routed_context["user_supplied_research_context"] = research_context
+                wrapper = provider_router.generate_interpretation(
+                    routed_context, titles, profile=report_profile,
+                    confirmed=hosted_f_consent if selected_hosted else True)
         except (ValueError, RuntimeError) as exc:
             _live_request_failed(exc)
         except Exception as exc:
@@ -1430,7 +1435,7 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
                "No model is downloaded and no Baseten request is made by these actions. "
                "A compact analysis summary and your question are sent to local Ollama only. "
                "AI explanations are suggestions requiring scientific verification.")
-    if st.checkbox("Enable local Ollama controls", value=False):
+    if st.checkbox("Enable local Ollama controls", value=False, disabled=selected_mode != "ollama"):
         import local_meta_provider
 
         local_model = st.selectbox("Local Ollama model", list(local_meta_provider.SUPPORTED_MODELS),
@@ -1462,8 +1467,8 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
                 if local_question.strip():
                     local_context["research_question"] = local_question.strip()
                 with st.spinner("Generating a local Llama report; this may take several minutes..."):
-                    local_wrapper = local_meta_provider.generate_scientific_report(
-                        local_context, list(effective_titles), profile=report_profile, model=local_model)
+                    local_wrapper = provider_router.generate_interpretation(
+                        local_context, list(effective_titles), profile=report_profile, model=local_model, confirmed=True)
                 if not isinstance(local_wrapper, dict) or local_wrapper.get("source") != "local_ollama":
                     raise RuntimeError("The local provider returned invalid provenance.")
                 validated = ask_muse.validate_report(local_wrapper.get("structured"), list(effective_titles),
@@ -1543,7 +1548,7 @@ with st.expander("Hosted model (explicit configuration and consent)"):
                 if research_context is not None:
                     hosted_context["user_supplied_research_context"] = research_context
                 with st.spinner("Requesting the configured hosted model..."):
-                    hosted_wrapper = hosted_model_provider.generate_interpretation(
+                    hosted_wrapper = provider_router.generate_interpretation(
                         hosted_context, list(effective_titles), profile=report_profile, confirmed=hosted_consent)
                 if not isinstance(hosted_wrapper, dict) or hosted_wrapper.get("source") != "hosted_model":
                     raise RuntimeError("The hosted provider returned invalid provenance.")
@@ -1687,7 +1692,7 @@ agent_consent = st.checkbox(
     value=False, key="agent_run_consent",
 )
 agent_use_ai = st.checkbox(
-    "Let Muse Spark propose the plan or use the selected provider for planning and interpretation (may incur charges)", value=False,
+    "Allow selected provider to propose a plan and interpretation (may incur charges)", value=False,
     key="agent_use_ai",
 )
 agent_destructive = st.checkbox(
@@ -1810,7 +1815,8 @@ with st.expander("Preview Markdown report"):
 
 st.divider()
 st.caption(
-    "Built with Muse Spark Open (optional AI). Deterministic analysis is entirely local. "
+    ("Built with Muse Spark Open via Baseten. " if selected_mode == "baseten" else "Optional AI uses the selected provider. ") +
+    "Deterministic analysis is entirely local. "
     "LabLens supports delimited text/CSV analysis only — not universal file formats or all "
     "scientific analyses. Always verify assumptions, units and provenance before drawing conclusions."
 )

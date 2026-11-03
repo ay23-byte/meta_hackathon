@@ -173,3 +173,9 @@ def test_provider_status_errors_are_actionable_and_secret_free(status, needle):
     message = describe_provider_status(status)
     assert f"HTTP {status}" in message
     assert needle.casefold() in message.casefold()
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

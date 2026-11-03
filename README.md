@@ -3,14 +3,14 @@
 **From a raw delimited dataset to a reproducible, assumption-aware analysis.**
 
 LabLens AI is a Streamlit research prototype for general scientific data
-analysis. It imports arbitrary CSV/TSV-style tables, lets you choose the X, Y,
+analysis. It imports supported delimited text tables, lets you choose the X, Y,
 group, time, uncertainty and secondary-Y columns yourself, previews cleaning
 decisions, computes descriptive statistics and diagnostics, fits a model *you*
-select, renders a range of charts, optionally asks **Muse Spark Open** for an
+select, renders a range of charts, optionally asks the selected provider for an
 interpretation grounded in the computed results, and exports one coherent
 result record.
 
-The original voltage-current sample workflow is preserved unchanged in
+The original voltage-current sample workflow is preserved in
 `app.py` / `analyze_experiment.py`. The general platform lives in
 `general_app.py` / `analyze_dataset.py` and shares the same provider adapter.
 
@@ -26,8 +26,8 @@ questions before running any tool, and has three additional allowlisted tools
 (`compare_models`, `evidence_summary`, `time_series_summary`). Reproducible
 demos A-E include an ambiguous question and a simulated provider outage.
 
-> Built with Muse Spark Open. Muse Spark is optional; every number in the app is
-> computed locally and works without an API key.
+> Muse Spark Open is available via Baseten. Numerical analysis is local and
+> works without an API key, regardless of the selected provider.
 
 ## Which entry point should I use?
 
@@ -124,7 +124,7 @@ clearly labelled and is not a live provider response. Full details and gaps:
   95% mean-response and individual prediction intervals are available for
   unweighted linear fits with sufficient data. Weighting requires an explicit
   uncertainty-column selection.
-- **F - Interpret.** Optional Muse Spark report generated only from a compact,
+- **F - Interpret.** Optional selected-provider report generated only from a compact,
   deterministic-only context (no raw rows, no prior AI text). The `legacy`
   eight-section profile remains the default; a `scientific` profile adds
   Research Question / Dataset Overview / Analysis Performed / Main Quantitative
@@ -349,17 +349,49 @@ real run — remains **unverified**. `docs/PROVIDER_INTEGRATION.md` describes th
 contract; `docs/AGENT_WORKFLOW.md` lists exactly which agent behaviours are
 implemented, verified offline, and still unverified live.
 
-## Optional Muse Spark setup
+## Provider configuration
+
+NVIDIA NIM is the default when `LABLENS_AI_PROVIDER` is absent. To change
+providers, set the selector in the process environment or project-local `.env`
+and restart the app. Process values take precedence, including blank values.
+A blank or unknown selection fails closed. There is **no automatic fallback**
+to another AI provider; deterministic results remain available after failure.
+
+| Provider | Selection | Configuration |
+| --- | --- | --- |
+| NVIDIA NIM | unset or `nvidia` | `NVIDIA_API_KEY`; optional `NVIDIA_MODEL` (default `meta/muse-glimmer-30b`) |
+| Baseten | `baseten` | `BASETEN_API_KEY`; optional `BASETEN_MODEL` (default `meta-models/muse-spark-open`) |
+| Local Ollama | `ollama` | optional `OLLAMA_MODEL` (default `llama3.2:1b`) and `OLLAMA_HOST` (default `http://127.0.0.1:11434`) |
+
+Copy `.env.example` to `.env` and configure credentials privately; never commit,
+print or share them. Ollama hosts are limited to loopback HTTP origins on
+`localhost`, `127.0.0.1` or `::1`, with an explicit port. Models must be installed
+manually; LabLens does not download them or use a hosted fallback. For example,
+local nonsecret configuration is:
+
+```dotenv
+LABLENS_AI_PROVIDER=ollama
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2:1b
+```
+
+Hosted requests send a compact analysis context and can incur charges; review
+provider terms and give consent before requesting them. A configured key is not
+proof of access or a validated response. See [hosted setup](docs/HOSTED_MODEL_SETUP.md).
+The older explicit `hosted` custom-endpoint mode remains available for backward
+compatibility; it does not stand in for NVIDIA or Baseten.
+
+## Optional Muse Spark setup (Baseten)
 
 1. Copy `.env.example` to `.env` (never commit `.env`).
-2. Add your private key as `BASETEN_API_KEY=...`.
+2. Set `LABLENS_AI_PROVIDER=baseten` and add your private `BASETEN_API_KEY`.
 3. Restart Streamlit.
 4. For live integration tests only, run `python -m pytest --run-live -m live -v`.
 
 The app works without a key: calculations, plots, exports, agent audit trails
 and the explicitly labelled OFFLINE MOCK report remain available; only *live*
 AI interpretation is disabled. The sidebar shows an honest provider status
-(`live_verified` is always false until a real call is observed). The default model is the officially
+(`live_verified` is always false until a real call is observed). The Baseten default model is the officially
 documented `meta-models/muse-spark-open`. If your account was assigned a dated
 variant, set `BASETEN_MODEL` in `.env`. Never commit, print or screen-share a
 key; provider errors are redacted.
@@ -458,7 +490,7 @@ ollama pull llama3.2:3b         # explicit one-time model download by the user
 python -m streamlit run general_app.py
 ```
 
-In **Meta Llama 3.2 — Local Ollama (optional)**, enable controls, select 1B or 3B,
+Set `LABLENS_AI_PROVIDER=ollama` and restart. In **Meta Llama 3.2 — Local Ollama (optional)**, enable controls, select 1B or 3B,
 press **Check local Ollama and model**, then **Generate local Llama report**. You can
 add a question about the current analysis before generating. The application
 sends a compact summary to `127.0.0.1:11434` on the **server machine**, not the
@@ -512,7 +544,7 @@ For the requested model, set `$env:NVIDIA_MODEL = "meta/muse-glimmer-30b"`
 in the same PowerShell process before launching (or set it in the project
 `.env`). Set `LABLENS_AI_PROVIDER=nvidia` in that process or the same `.env`.
 An explicitly blank or unsupported provider fails closed; if no provider is set,
-the legacy Muse Spark default remains. Check the F · Interpret provider label
+NVIDIA NIM is selected by default. Check the F · Interpret provider label
 and restart the correct app after configuration changes. NVIDIA
 uses `https://integrate.api.nvidia.com/v1` and the configured exact model ID;
 the model defaults to `meta/muse-glimmer-30b` when `NVIDIA_MODEL` is absent; an explicitly blank model fails closed. Generic `LABLENS_MODEL` / `LABLENS_BASE_URL`

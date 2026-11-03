@@ -18,7 +18,9 @@ def test_dispatches_only_selected_adapter(monkeypatch, selection, expected):
     def adapter(name, source):
         def call(*args, **kwargs):
             calls.append(name)
-            return {"source": source, "is_mock": False, "model": name,
+            return {"source": source, "is_mock": False,
+                    "model": {"nvidia": "meta/muse-glimmer-30b", "ollama": "llama3.2:1b", "baseten": "baseten"}[name],
+                    "provider": {"nvidia": "NVIDIA NIM", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"], "baseten": "Baseten"}[name],
                     "structured": {"sections": [], "claims": []}}
         return call
 
@@ -28,7 +30,7 @@ def test_dispatches_only_selected_adapter(monkeypatch, selection, expected):
     report = provider_router.generate_interpretation({}, confirmed=True)
     assert calls == [selection]
     assert report["source"] == expected and report["is_mock"] is False
-    assert report["model"] == selection
+    assert report["model"] == {"nvidia": "meta/muse-glimmer-30b", "ollama": "llama3.2:1b", "baseten": "baseten"}[selection]
 
 
 @pytest.mark.parametrize("selection", ["nvidia", "baseten", "ollama", "unrecognized"])
@@ -118,7 +120,9 @@ def test_agent_interpretation_dispatch_and_evidence(monkeypatch, selection):
             assert name == selection
             assert context["result_ids"] == ["tool.1"]
             assert context["evidence_index"]["tool.1"]["output"]["result"]["value"] == 7
-            return {"model": name, "provider": name, "source": sources[name], "is_mock": False,
+            return {"model": {"nvidia": "meta/muse-glimmer-30b", "ollama": "llama3.2:1b", "baseten": "baseten"}[name],
+                    "provider": {"nvidia": "NVIDIA NIM", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"], "baseten": "Baseten"}[name],
+                    "source": sources[name], "is_mock": False,
                     "structured": {"sections": [{"title": title, "content": "Review the computed result."}
                                                   for title in ask_muse.REQUIRED_TITLES], "claims": []}}
         return call
@@ -141,8 +145,74 @@ def test_agent_interpretation_rejects_unknown_evidence(monkeypatch):
                   "claims": [{"claim": "Result", "evidence": "result", "evidence_type": "computed",
                               "confidence_or_uncertainty": "unknown", "limitation": "review needed",
                               "proposed_verification": "Repeat", "evidence_ids": ["invented.id"]}]}
-        return {"model": "fake", "provider": "NVIDIA NIM", "source": "hosted_model",
+        return {"model": "meta/muse-glimmer-30b", "provider": "NVIDIA NIM", "source": "hosted_model",
                 "is_mock": False, "structured": report}
     monkeypatch.setattr(hosted_model_provider, "generate_interpretation", fake)
     digest = {"tool_results": [{"ok": True, "result": {"value": 7}}]}
     assert agent_planner.generate_grounded_interpretation(digest)["rejected"] is True
+
+
+def test_absent_selection_defaults_to_nvidia_and_never_baseten(monkeypatch):
+    import provider_config
+
+    monkeypatch.delenv("LABLENS_AI_PROVIDER", raising=False)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-baseten-key")
+    assert provider_config.selected_ai_provider() == provider_config.get_provider() == "nvidia"
+    assert provider_config.get_api_env() == "NVIDIA_API_KEY"
+    assert provider_config.get_base_url() == "https://integrate.api.nvidia.com/v1"
+    assert provider_config.get_model() == "meta/muse-glimmer-30b"
+    assert provider_config.get_api_key() is None
+    monkeypatch.setattr(ask_muse, "OpenAI", lambda **kw: pytest.fail("Baseten called"))
+    monkeypatch.setattr(local_meta_provider, "_request", lambda *a, **kw: pytest.fail("Ollama called"))
+    with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
+        provider_router.generate_interpretation({}, confirmed=True)
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "baseten", "unknown"])
+def test_direct_ollama_request_rejects_other_provider_before_network(monkeypatch, mode):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setattr(local_meta_provider.urllib.request, "build_opener", lambda *a: pytest.fail("network attempted"))
+    with pytest.raises(RuntimeError, match="not the selected provider"):
+        local_meta_provider._request("/api/tags")
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "ollama"])
+def test_router_rejects_wrong_model_or_provider_provenance(monkeypatch, mode):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    wrapper = {"source": "hosted_model" if mode == "nvidia" else "local_ollama", "is_mock": False,
+               "model": "wrong-model", "provider": "wrong-provider", "structured": {}}
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", lambda *a, **kw: wrapper)
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", lambda *a, **kw: wrapper)
+    with pytest.raises(RuntimeError, match="provenance"):
+        provider_router.generate_interpretation({}, confirmed=True)
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "baseten", "ollama"])
+def test_router_rejects_secret_in_context_before_adapter(monkeypatch, mode):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setenv("BASETEN_API_KEY", 'unit-secret-with-"quote')
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", lambda *a, **kw: pytest.fail("provider called"))
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", lambda *a, **kw: pytest.fail("provider called"))
+    monkeypatch.setattr(ask_muse, "generate_interpretation", lambda *a, **kw: pytest.fail("provider called"))
+    with pytest.raises(ValueError, match="credential material") as error:
+        provider_router.generate_interpretation({"question": 'unit-secret-with-"quote'}, confirmed=True)
+    assert 'unit-secret-with-"quote' not in str(error.value)
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "baseten", "ollama"])
+def test_router_rejects_secret_in_output(monkeypatch, mode):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    secret = "unit-fake-secret-key"
+    monkeypatch.setenv("BASETEN_API_KEY", secret)
+    model = {"nvidia": "meta/muse-glimmer-30b", "baseten": "muse", "ollama": "llama3.2:1b"}[mode]
+    provider = {"nvidia": "NVIDIA NIM", "baseten": "Baseten", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"]}[mode]
+    source = {"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}[mode]
+    def fake(*args, **kwargs):
+        return {"model": model, "provider": provider, "source": source, "is_mock": False,
+                "structured": {"sections": [{"content": secret}]}}
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", fake)
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", fake)
+    monkeypatch.setattr(ask_muse, "generate_interpretation", fake)
+    with pytest.raises(RuntimeError, match="credential material") as error:
+        provider_router.generate_interpretation({}, confirmed=True)
+    assert secret not in str(error.value)

@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 import ask_muse
+import provider_config
 import provider_router
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
@@ -256,8 +257,13 @@ def analyze_csv(
             result["ai_note"] = "Unsupported provider selection; no provider was called."
         except (ValueError, RuntimeError) as exc:
             # Never display untrusted exception text or provider responses.
+            mode = provider_config.selected_ai_provider()
+            hint = {"nvidia": "Check NVIDIA_API_KEY and provider availability.",
+                    "baseten": "Check BASETEN_API_KEY and provider availability.",
+                    "ollama": "Check the local Ollama service and model.",
+                    "hosted": "Check hosted configuration and availability."}.get(mode, "Check provider configuration.")
             result["ai_note"] = (f"AI interpretation unavailable: {type(exc).__name__}; "
-                                 "the selected provider may be unavailable or not configured.")
+                                 f"the selected provider may be unavailable or not configured. {hint}")
 
     destination = Path(output_dir) if output_dir else DEFAULT_OUTPUT
     destination.mkdir(parents=True, exist_ok=True)
