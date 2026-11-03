@@ -331,7 +331,7 @@ def test_f_interpret_routes_nvidia_with_consent_and_preserves_provenance(monkeyp
     assert len(calls) == 2 and calls[0][1]["base_url"] == "https://integrate.api.nvidia.com/v1"
     req = calls[1][1]
     assert req["model"] == TEST_MODEL and "extra_body" not in req
-    assert req["temperature"] == 0.2 and req["top_p"] == 1 and req["max_tokens"] == 512
+    assert req["temperature"] == 0.95 and req["top_p"] == 1 and req["max_tokens"] == 8192
     assert any("NVIDIA NIM report" in x.value for x in app.markdown)
     assert app.session_state["ai_state"]["live"]["source"] == "hosted_model"
     assert app.session_state["hosted_verification"]["generation"] is True
