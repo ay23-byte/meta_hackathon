@@ -216,7 +216,7 @@ def test_nvidia_success_and_request_parameters(monkeypatch):
     assert init["api_key"] == SECRET and init["max_retries"] == 0
     assert init["timeout"].connect == 30 and init["timeout"].read == 300
     assert request["model"] == TEST_MODEL
-    assert request["max_tokens"] == 512 and request["temperature"] == 0.2 and request["top_p"] == 1
+    assert request["max_tokens"] == 8192 and request["temperature"] == 0.95 and request["top_p"] == 1
     assert "extra_body" not in request
     assert result["provider"] == "NVIDIA NIM" and SECRET not in json.dumps(result)
     monkeypatch.setenv("LABLENS_MAX_OUTPUT_TOKENS", "1024")
@@ -537,8 +537,8 @@ def test_nvidia_sdk_uses_chat_completions_endpoint_offline(monkeypatch):
     assert [(r.method, r.url.path) for r in requests] == [("GET", "/v1/models"), ("POST", "/v1/chat/completions")]
     assert all(str(r.url).startswith("https://integrate.api.nvidia.com/") for r in requests)
     body = json.loads(requests[1].content)
-    assert body["model"] == TEST_MODEL and body["max_tokens"] == 512
-    assert body["temperature"] == 0.2 and body["top_p"] == 1
+    assert body["model"] == TEST_MODEL and body["max_tokens"] == 8192
+    assert body["temperature"] == 0.95 and body["top_p"] == 1
     assert SECRET not in json.dumps(result)
     client.close()
 
