@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 import ask_muse
-import provider_config
+import provider_router
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
@@ -231,21 +231,12 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile,
                     research_question=research_question,
                 )
-            elif not provider_config.get_api_key():
-                result["ai_note"] = ("AI was requested but BASETEN_API_KEY is not configured; "
-                                     "deterministic analysis is complete. Use --ai-mock for a "
-                                     "clearly labelled offline preview.")
-                wrapper = None
-            elif report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
-                wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
             else:
-                wrapper = ask_muse.generate_interpretation(
-                    context, section_titles=titles, profile=report_profile
-                )
+                wrapper = provider_router.generate_interpretation(
+                    context, titles, profile=report_profile, confirmed=True)
             if wrapper is not None:
-                wrapper = ask_muse.enforce_report_provenance(
-                    wrapper, "mock" if generate_mock else "live"
-                )
+                if generate_mock:
+                    wrapper = ask_muse.enforce_report_provenance(wrapper, "mock")
                 structured = ask_muse.validate_report(
                     wrapper.get("structured"), titles, profile=report_profile,
                     allowed_evidence_ids=context.get("result_ids"),
@@ -261,8 +252,12 @@ def analyze_csv(
                     else:
                         result["ai"] = {**wrapper, "structured": structured, "numeric_guard": guard,
                                         "evidence_index": context.get("evidence_index", {})}
+        except provider_router.UnsupportedProviderError:
+            result["ai_note"] = "Unsupported provider selection; no provider was called."
         except (ValueError, RuntimeError) as exc:
-            result["ai_note"] = f"AI interpretation unavailable: {type(exc).__name__}."
+            # Never display untrusted exception text or provider responses.
+            result["ai_note"] = (f"AI interpretation unavailable: {type(exc).__name__}; "
+                                 "the selected provider may be unavailable or not configured.")
 
     destination = Path(output_dir) if output_dir else DEFAULT_OUTPUT
     destination.mkdir(parents=True, exist_ok=True)
@@ -381,7 +376,7 @@ def main(argv=None):
     if (result.get("ai") or {}).get("is_mock"):
         print("OFFLINE MOCK report written (deterministic template, NOT Muse Spark, NOT AI).")
     if args.agent:
-        use_ai = bool(args.agent_use_ai and provider_config.get_api_key())
+        use_ai = bool(args.agent_use_ai)
         try:
             agent_summary = run_agent(
                 args.csv, args.output_dir, use_ai=use_ai,

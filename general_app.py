@@ -1435,11 +1435,14 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
 
         local_model = st.selectbox("Local Ollama model", list(local_meta_provider.SUPPORTED_MODELS),
                                    format_func=lambda model: local_meta_provider.SUPPORTED_MODELS[model])
+        # Bind cached status and reports to the selected local origin without displaying it.
+        local_host_hash = _hash({"host": provider_config.get_setting("OLLAMA_HOST", local_meta_provider.BASE_URL)})
         if st.button("Check local Ollama and model"):
-            st.session_state["ollama_status"] = {"model": local_model,
+            st.session_state["ollama_status"] = {"model": local_model, "host_hash": local_host_hash,
                                                   "status": local_meta_provider.check_ollama_status(local_model)}
         stored_status = st.session_state.get("ollama_status") or {}
-        local_status = stored_status.get("status") if stored_status.get("model") == local_model else None
+        local_status = (stored_status.get("status") if stored_status.get("model") == local_model
+                        and stored_status.get("host_hash") == local_host_hash else None)
         if local_status:
             st.text(f"Ollama running: {local_status['running']} · model available: {local_status['model_available']}. "
                     f"{local_status['message']}")
@@ -1447,7 +1450,8 @@ with st.expander("Meta Llama 3.2 — Local Ollama (optional)"):
             st.caption("Status not checked. Checking does not download or run the model.")
         local_question = st.text_input("Ask a question about this analysis (optional)", max_chars=500,
                                        help="The question is treated as untrusted context, not as computed evidence.")
-        local_hash = _hash({"analysis": context_hash, "question": local_question.strip(), "model": local_model})
+        local_hash = _hash({"analysis": context_hash, "question": local_question.strip(),
+                            "model": local_model, "host_hash": local_host_hash})
         if st.button("Generate local Llama report", key="ollama_generate_button"):
             st.session_state["hosted_active"] = False
             _set_active_report(None)
@@ -1679,11 +1683,11 @@ st.caption("Plan -> strict validation -> allowlisted tool execution -> diagnosti
 
 agent_audit_files: dict[str, bytes] = {}
 agent_consent = st.checkbox(
-    "Run the bounded analysis agent (consent: may call Muse Spark when a key is configured)",
+    "Run the bounded analysis agent (separate consent from AI calls)",
     value=False, key="agent_run_consent",
 )
 agent_use_ai = st.checkbox(
-    "Let Muse Spark propose the plan and the final interpretation", value=False,
+    "Let Muse Spark propose the plan or use the selected provider for planning and interpretation (may incur charges)", value=False,
     key="agent_use_ai",
 )
 agent_destructive = st.checkbox(
@@ -1691,11 +1695,11 @@ agent_destructive = st.checkbox(
     value=False, key="agent_destructive_consent",
 )
 
-if agent_consent:
+if agent_consent and (not agent_use_ai or st.button("Run agent AI now")):
     with st.spinner("Running bounded agent workflow..."):
         try:
             agent_run = AnalysisOrchestrator(OrchestratorConfig(
-                use_ai=bool(agent_use_ai and provider_config.get_api_key()),
+                use_ai=bool(agent_use_ai),
                 user_confirmed=agent_destructive,
                 research_question=question,
             )).run(load)

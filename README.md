@@ -153,7 +153,7 @@ Orchestrator** (`agent_core.py`) runs a bounded, testable loop:
 0. The user research question is recorded; a deterministic gate requests
    clarification with concrete options before **any** tool runs if it is vague.
 1. `inspect_dataset` produces a structured data-quality summary.
-2. Muse Spark (or an offline fallback) proposes a plan of tool names and
+2. The explicitly selected AI provider (or a documented offline fallback) proposes a plan of tool names and
    parameters — **never code**.
 3. `validate_plan` rejects unknown tools, bad parameters, forbidden tokens and
    oversized plans before anything executes.
@@ -182,10 +182,14 @@ Seven reproducible cases cover five required scenarios: success (A), poor
 initial fit with a validated alternative (B), no justifiable model (B'),
 messy-data recovery (C), ambiguous schema (C'), ambiguous research question
 (D) and a simulated provider outage (E) that falls back to a deterministic
-plan and writes a labelled OFFLINE MOCK report. Everything runs offline; with
-`BASETEN_API_KEY` set, `--use-ai` / `--agent-use-ai` let Muse Spark propose the
-plan. See `docs/AGENT_WORKFLOW.md` for the diagram, verification matrix and the
-explicit list of live-unverified behaviours.
+plan and writes a labelled OFFLINE MOCK report. Everything runs offline by default.
+With `--use-ai` / `--agent-use-ai`, agent planning and interpretation use the
+selected provider: NVIDIA, Baseten or Ollama. In the general workspace, opt in
+to the agent and AI separately, then click **Run agent AI now** for each run;
+ordinary reruns do not request AI. Hosted requests can transmit analysis
+summaries and incur charges. Provider failure is recorded and the deterministic
+plan/conclusion is retained; no other AI provider is tried. See
+`docs/AGENT_WORKFLOW.md` for the diagram and verification matrix.
 
 ## Quick start
 

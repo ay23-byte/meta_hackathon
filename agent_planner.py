@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 import ask_muse
 import provider_config
+import provider_router
 from agent_tools import MAX_DEGREE, MAX_FALLBACK_MODELS, MAX_STEPS, registry_manifest
 from fitting_core import MODEL_SPECS
 
@@ -107,36 +108,16 @@ def _extract_json(text: str) -> dict:
 
 def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
                        research_question: str | None = None) -> dict:
-    """Ask Muse Spark for a plan. Raises PlannerUnavailable on any failure."""
-    api_key = provider_config.get_api_key()
-    if not api_key:
-        raise PlannerUnavailable("BASETEN_API_KEY is not configured")
+    """Ask the selected provider for a plan; raise PlannerUnavailable on failure."""
     prompt = build_plan_prompt(quality, manifest, research_question)
-    if len(prompt) > ask_muse.MAX_PROMPT_CHARS:
-        raise PlannerUnavailable("planning prompt exceeds the size limit")
     try:
-        # Pass a per-request budget; never mutate shared module-level settings.
-        client = ask_muse.OpenAI(
-            api_key=api_key, base_url=ask_muse.BASE_URL,
-            timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=0,
-        )
-        response = ask_muse._completion_request(
-            client, prompt, json_mode=True, modern_tokens=True, max_tokens=MAX_PLAN_TOKENS
-        )
-    except Exception as exc:
-        raise PlannerUnavailable(f"provider request failed ({type(exc).__name__})") from None
-
-    choices = getattr(response, "choices", None)
-    if not choices:
-        raise PlannerUnavailable("provider returned no choices")
-    message = getattr(choices[0], "message", None)
-    content = getattr(message, "content", None) if message is not None else None
-    if not isinstance(content, str) or not content.strip():
-        raise PlannerUnavailable("provider returned no visible plan content")
-    try:
+        content = provider_router.request_plan(prompt, max_tokens=MAX_PLAN_TOKENS, confirmed=True)
         return _extract_json(content)
     except (ValueError, json.JSONDecodeError) as exc:
-        raise PlannerUnavailable(f"provider returned an invalid plan: {exc}") from None
+        raise PlannerUnavailable(f"provider returned an invalid plan ({type(exc).__name__})") from None
+    except Exception as exc:
+        # Never include provider exception text or sensitive context in the audit.
+        raise PlannerUnavailable(f"provider request failed ({type(exc).__name__}); provider may be unavailable or not configured") from None
 
 
 def validate_plan(raw, allowed_tools: list[str] | None = None,
@@ -309,30 +290,45 @@ def grounding_check(text: str, results: list[dict]) -> dict:
 
 
 def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
-    """Optional Muse Spark report built ONLY from executed tool outputs."""
-    if not provider_config.get_api_key():
+    """Request a report from the selected provider, grounded in executed outputs."""
+    mode = provider_config.selected_ai_provider()
+    if mode not in ("", "baseten", "nvidia", "ollama"):
+        raise RuntimeError("The selected provider is unsupported; no provider request was made.")
+    results = audit_digest.get("tool_results") or []
+    evidence = {f"tool.{i}": {"label": "Executed tool output", "output": item}
+                for i, item in enumerate(results[:12], 1) if isinstance(item, dict) and item.get("ok")}
+    if not evidence:
         return None
     context = {
         "note": "Use only these executed tool outputs. Never invent numbers.",
         "dataset": audit_digest.get("dataset"),
         "research_question": audit_digest.get("research_question"),
         "quality": audit_digest.get("quality_summary"),
-        "tool_results": audit_digest.get("tool_results"),
+        "tool_results": results,
         "decisions": audit_digest.get("decisions"),
         "final_state": audit_digest.get("final", {}).get("state"),
+        "result_ids": list(evidence), "evidence_index": evidence,
     }
     try:
-        wrapper = ask_muse.generate_interpretation(context)
+        wrapper = provider_router.generate_interpretation(context, confirmed=True)
+        structured = ask_muse.validate_report(wrapper.get("structured"),
+                                              allowed_evidence_ids=context["result_ids"])
+        if structured is None:
+            return {"rejected": True}
+        from ai_guard import check_report_numbers
+        guard = check_report_numbers(structured, context)
+        if guard["status"] == "contradiction":
+            return {"rejected": True, "numeric_guard": guard}
+        prose = " ".join(section.get("content", "") for section in structured["sections"])
+        prose += " " + " ".join(str(value) for claim in structured.get("claims", [])
+                                  for key, value in claim.items() if key != "evidence_ids")
+        check = grounding_check(prose, results)
+        if not check["pass"]:
+            return {"rejected": True, "grounding_check": check}
+        return {**wrapper, "structured": structured, "evidence_index": evidence,
+                "numeric_guard": guard, "grounding_check": check}
     except (ValueError, RuntimeError):
-        return None
-    prose = " ".join(
-        section.get("content", "") for section in wrapper["structured"]["sections"]
-    )
-    check = grounding_check(prose, context["tool_results"])
-    if not check["pass"]:
-        return {"rejected": True, "grounding_check": check}
-    return {"model": wrapper.get("model"), "structured": wrapper["structured"],
-            "grounding_check": check}
+        return {"rejected": True, "error": "Provider unavailable or report validation failed."}
 
 
 def deterministic_conclusion(audit_digest: dict) -> str:
