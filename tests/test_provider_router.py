@@ -62,3 +62,43 @@ def test_mock_cannot_be_returned_on_live_route(monkeypatch, selection):
     monkeypatch.setattr(ask_muse, "generate_interpretation", mock)
     with pytest.raises(RuntimeError):
         provider_router.generate_interpretation({}, confirmed=True)
+
+
+@pytest.mark.parametrize("selection", ["nvidia", "baseten", "ollama"])
+def test_agent_plan_uses_only_selected_adapter(monkeypatch, selection):
+    import json
+    from types import SimpleNamespace
+
+    import agent_planner
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", selection)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-key")
+    calls = []
+    plan = {"dataset_understanding": "Measured data", "steps": [],
+            "on_poor_fit": {"strategy": "halt_and_explain", "fallback_models": []},
+            "stop_condition": "stop"}
+    payload = json.dumps(plan)
+    def hosted(config, prompt):
+        calls.append("nvidia")
+        return payload, "verified"
+    def local(path, body=None, **kwargs):
+        calls.append("ollama")
+        return {"done": True, "message": {"content": payload}}
+    def baseten(client, prompt, **kwargs):
+        calls.append("baseten")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=payload))])
+    monkeypatch.setattr(hosted_model_provider, "_config", lambda: {})
+    monkeypatch.setattr(hosted_model_provider, "_request_content", hosted)
+    monkeypatch.setattr(local_meta_provider, "check_ollama_status", lambda model: {"model_available": True})
+    monkeypatch.setattr(local_meta_provider, "_request", local)
+    monkeypatch.setattr(ask_muse, "OpenAI", lambda **kwargs: object())
+    monkeypatch.setattr(ask_muse, "_completion_request", baseten)
+    assert agent_planner.request_agent_plan({}) == plan
+    assert calls == [selection]
+
+
+def test_agent_plan_requires_consent_before_any_request(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
+    monkeypatch.setattr(local_meta_provider, "_request", lambda *a, **k: pytest.fail("network attempted"))
+    with pytest.raises(ValueError, match="consent"):
+        provider_router.request_plan("plan", max_tokens=32)

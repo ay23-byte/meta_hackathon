@@ -168,7 +168,7 @@ class AnalysisOrchestrator:
             if tool == "diagnose_fit" and params.get("fit_ref") == "fit_1" and fit_refs:
                 params["fit_ref"] = fit_refs[0]
             result = execute_tool(tool, params, ctx)
-            decision = ("AI-selected tool" if run.plan_source.startswith("muse")
+            decision = ("AI-selected tool" if not run.plan_source.startswith("deterministic")
                         else "validated plan step")
             seq = run.log_tool(result, phase="execute", decision=decision)
             if not result.ok:
@@ -252,7 +252,7 @@ class AnalysisOrchestrator:
                 "fit_ref": new_ref, "status": "executed",
             })
             tried_models.append(alternative)
-            run.log(phase="retry", actor="ai" if run.plan_source.startswith("muse") else "deterministic",
+            run.log(phase="retry", actor="ai" if not run.plan_source.startswith("deterministic") else "deterministic",
                     status="ok", result_digest={"alternative": alternative},
                     decision="validated plan alternative selected")
 
@@ -304,7 +304,9 @@ class AnalysisOrchestrator:
                     raw = planner.request_agent_plan(
                         quality, research_question=research_question
                     )
-                candidate_source = "muse_spark"
+                candidate_source = ("muse_spark" if self.config.plan_provider is not None
+                                    else {"nvidia": "nvidia_nim", "ollama": "ollama"}.get(
+                                        provider_config.selected_ai_provider(), "muse_spark"))
             except Exception as exc:
                 run.log(phase="plan", actor="ai", status="unavailable",
                         result_digest={"error": type(exc).__name__},
@@ -315,9 +317,9 @@ class AnalysisOrchestrator:
             candidate_source = "deterministic_fallback"
 
         validation = planner.validate_plan(raw)
-        run.log(phase="plan", actor="ai" if candidate_source == "muse_spark" else "deterministic",
+        run.log(phase="plan", actor="ai" if not candidate_source.startswith("deterministic") else "deterministic",
                 status="ok", result_digest={"plan": raw},
-                decision="AI plan proposed" if candidate_source == "muse_spark"
+                decision="AI plan proposed" if not candidate_source.startswith("deterministic")
                          else "deterministic plan generated")
         if not validation.accepted:
             run.log(phase="validate", actor="deterministic", status="rejected",

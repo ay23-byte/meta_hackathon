@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 import ask_muse
 import provider_config
+import provider_router
 from agent_tools import MAX_DEGREE, MAX_FALLBACK_MODELS, MAX_STEPS, registry_manifest
 from fitting_core import MODEL_SPECS
 
@@ -107,40 +108,16 @@ def _extract_json(text: str) -> dict:
 
 def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
                        research_question: str | None = None) -> dict:
-    """Ask Muse Spark for a plan. Raises PlannerUnavailable on any failure."""
-    try:
-        provider_config.require_baseten_selection()
-    except RuntimeError as exc:
-        raise PlannerUnavailable(str(exc)) from None
-    api_key = provider_config.get_api_key()
-    if not api_key:
-        raise PlannerUnavailable("BASETEN_API_KEY is not configured")
+    """Ask the selected provider for a plan; raise PlannerUnavailable on failure."""
     prompt = build_plan_prompt(quality, manifest, research_question)
-    if len(prompt) > ask_muse.MAX_PROMPT_CHARS:
-        raise PlannerUnavailable("planning prompt exceeds the size limit")
     try:
-        # Pass a per-request budget; never mutate shared module-level settings.
-        client = ask_muse.OpenAI(
-            api_key=api_key, base_url=ask_muse.BASE_URL,
-            timeout=ask_muse.REQUEST_TIMEOUT_SECONDS, max_retries=0,
-        )
-        response = ask_muse._completion_request(
-            client, prompt, json_mode=True, modern_tokens=True, max_tokens=MAX_PLAN_TOKENS
-        )
-    except Exception as exc:
-        raise PlannerUnavailable(f"provider request failed ({type(exc).__name__})") from None
-
-    choices = getattr(response, "choices", None)
-    if not choices:
-        raise PlannerUnavailable("provider returned no choices")
-    message = getattr(choices[0], "message", None)
-    content = getattr(message, "content", None) if message is not None else None
-    if not isinstance(content, str) or not content.strip():
-        raise PlannerUnavailable("provider returned no visible plan content")
-    try:
+        content = provider_router.request_plan(prompt, max_tokens=MAX_PLAN_TOKENS, confirmed=True)
         return _extract_json(content)
     except (ValueError, json.JSONDecodeError) as exc:
-        raise PlannerUnavailable(f"provider returned an invalid plan: {exc}") from None
+        raise PlannerUnavailable(f"provider returned an invalid plan ({type(exc).__name__})") from None
+    except Exception as exc:
+        # Never include provider exception text or sensitive context in the audit.
+        raise PlannerUnavailable(f"provider request failed ({type(exc).__name__}); provider may be unavailable or not configured") from None
 
 
 def validate_plan(raw, allowed_tools: list[str] | None = None,
