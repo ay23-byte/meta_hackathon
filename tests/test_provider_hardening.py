@@ -366,3 +366,116 @@ def test_disabled_dotenv_never_reads_selected_file(monkeypatch, tmp_path):
     assert provider_config.get_api_key() is None
     assert provider_config.selected_ai_provider() == ""
     assert provider_config.redact("safe message") == "safe message"
+
+
+# NVIDIA uses the hosted adapter on this branch; the tests above deliberately
+# retain coverage of the still-supported Baseten/legacy entry points.
+@pytest.fixture
+def fake_nvidia_provider(monkeypatch):
+    import hosted_model_provider as hosted
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "nvidia")
+    monkeypatch.setenv("NVIDIA_API_KEY", "unit-nvidia-fake-key")
+    monkeypatch.setenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    state = {"requests": [], "content": None, "outcome": None}
+
+    def factory(**kwargs):
+        def create(**request):
+            state["requests"].append(request)
+            outcome = state["outcome"]
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if outcome is not None:
+                return outcome
+            return SimpleNamespace(model="meta/muse-glimmer-30b", choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=state["content"]))])
+        return SimpleNamespace(
+            models=SimpleNamespace(list=lambda: SimpleNamespace(data=[SimpleNamespace(id="meta/muse-glimmer-30b")])),
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        )
+
+    monkeypatch.setattr(hosted, "OpenAI", factory)
+    return state
+
+
+NVIDIA_CONTEXT = {"result_ids": ["fit.example"], "evidence_index": {"fit.example": {"slope": 2.5}},
+                  "fit": {"success": True, "model": "linear", "parameters": {"slope": 2.5},
+                          "metrics": {"r2": 1.0, "rmse": 0.0}, "n_observations": 12}}
+
+
+@pytest.mark.parametrize("outcome,expected", [
+    (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=""))]), "no visible"),
+    (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="  "))]), "no visible"),
+    (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=None))]), "no visible"),
+    (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="not json"))]), "schema"),
+    (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content='{"sections":[],"claims":[]}'))]), "schema"),
+    (SimpleNamespace(choices=[]), "no response choices"),
+    (SimpleNamespace(), "no response choices"),
+])
+def test_nvidia_invalid_responses_reach_mocked_client(fake_nvidia_provider, outcome, expected):
+    import hosted_model_provider as hosted
+
+    fake_nvidia_provider["outcome"] = outcome
+    with pytest.raises(RuntimeError, match=expected):
+        hosted.generate_interpretation(NVIDIA_CONTEXT, confirmed=True)
+    assert len(fake_nvidia_provider["requests"]) == 1
+
+
+def test_nvidia_success_reaches_fake_client_and_preserves_provenance(fake_nvidia_provider):
+    import hosted_model_provider as hosted
+
+    structured = ask_muse.generate_mock_report(NVIDIA_CONTEXT, profile="legacy")["structured"]
+    fake_nvidia_provider["content"] = json.dumps(structured)
+    wrapper = hosted.generate_interpretation(NVIDIA_CONTEXT, confirmed=True)
+    assert len(fake_nvidia_provider["requests"]) == 1
+    assert wrapper["source"] == "hosted_model" and wrapper["provider"] == "NVIDIA NIM"
+    assert wrapper["is_mock"] is False and wrapper["model"] == "meta/muse-glimmer-30b"
+    assert "unit-nvidia-fake-key" not in json.dumps(wrapper)
+
+
+def test_nvidia_ui_duplicate_clicks_make_one_provider_request(monkeypatch, fake_nvidia_provider):
+    import hosted_model_provider as hosted
+
+    original = hosted.generate_interpretation
+
+    def capture(context, section_titles=None, **kwargs):
+        fake_nvidia_provider["content"] = json.dumps(
+            ask_muse.generate_mock_report(context, section_titles, profile=kwargs["profile"])["structured"])
+        return original(context, section_titles, **kwargs)
+
+    monkeypatch.setattr(hosted, "generate_interpretation", capture)
+    at = run_general_app()
+    consent = next(c for c in at.checkbox if c.label.startswith(
+        "I confirmed the hosted endpoint and charges and consent to send this analysis from F"))
+    consent.check().run()
+    next(b for b in at.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    next(b for b in at.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert not at.exception
+    assert len(fake_nvidia_provider["requests"]) == 1
+    assert any("no duplicate provider request" in item.value for item in at.info)
+
+
+def test_nvidia_blank_process_key_blocks_explicit_dotenv(monkeypatch, tmp_path):
+    path = tmp_path / "only-test.env"
+    path.write_text("NVIDIA_API_KEY=unit-only-file-key\n", encoding="utf-8")
+    monkeypatch.setattr(provider_config, "ENV_FILE", path)
+    monkeypatch.setattr(provider_config, "NVIDIA_ENV_FILE", None)
+    monkeypatch.delenv("LABLENS_DISABLE_DOTENV")
+    monkeypatch.setenv("NVIDIA_API_KEY", " ")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
+    monkeypatch.delenv("NVIDIA_API_KEY")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == "unit-only-file-key"
+    assert "NVIDIA_API_KEY" not in os.environ
+    monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
+    assert provider_config.nvidia_setting("NVIDIA_API_KEY") == ""
+
+
+@pytest.mark.parametrize("credential", ["", "your_nvidia_api_key_here"])
+def test_nvidia_invalid_key_never_constructs_mocked_client(monkeypatch, fake_nvidia_provider, credential):
+    import hosted_model_provider as hosted
+
+    monkeypatch.setenv("NVIDIA_API_KEY", credential)
+    with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
+        hosted.generate_interpretation(NVIDIA_CONTEXT, confirmed=True)
+    assert len(fake_nvidia_provider["requests"]) == 0
