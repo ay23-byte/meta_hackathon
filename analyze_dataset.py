@@ -231,9 +231,18 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile,
                     research_question=research_question,
                 )
+            elif provider_config.selected_ai_provider() == "nvidia":
+                import hosted_model_provider
+
+                wrapper = hosted_model_provider.generate_interpretation(
+                    context, titles, profile=report_profile, confirmed=True)
+            elif provider_config.selected_ai_provider() == "ollama":
+                import local_meta_provider
+
+                wrapper = local_meta_provider.generate_scientific_report(
+                    context, titles, profile=report_profile, model=provider_config.get_ollama_model())
             elif provider_config.selected_ai_provider() not in ("", "baseten"):
-                result["ai_note"] = ("The selected provider is not yet supported by this CLI report path; "
-                                     "no provider was called. Deterministic analysis is complete.")
+                result["ai_note"] = "Unsupported provider selection; no provider was called."
                 wrapper = None
             elif not provider_config.get_api_key():
                 result["ai_note"] = ("AI was requested but BASETEN_API_KEY is not configured; "
@@ -247,9 +256,13 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile
                 )
             if wrapper is not None:
-                wrapper = ask_muse.enforce_report_provenance(
-                    wrapper, "mock" if generate_mock else "live"
-                )
+                if generate_mock or provider_config.selected_ai_provider() in ("", "baseten"):
+                    wrapper = ask_muse.enforce_report_provenance(
+                        wrapper, "mock" if generate_mock else "live"
+                    )
+                elif (not isinstance(wrapper, dict) or wrapper.get("is_mock") is not False or
+                      wrapper.get("source") != ("hosted_model" if provider_config.selected_ai_provider() == "nvidia" else "local_ollama")):
+                    raise RuntimeError("Selected provider returned invalid provenance.")
                 structured = ask_muse.validate_report(
                     wrapper.get("structured"), titles, profile=report_profile,
                     allowed_evidence_ids=context.get("result_ids"),
