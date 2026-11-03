@@ -102,3 +102,47 @@ def test_agent_plan_requires_consent_before_any_request(monkeypatch):
     monkeypatch.setattr(local_meta_provider, "_request", lambda *a, **k: pytest.fail("network attempted"))
     with pytest.raises(ValueError, match="consent"):
         provider_router.request_plan("plan", max_tokens=32)
+
+
+@pytest.mark.parametrize("selection", ["nvidia", "baseten", "ollama"])
+def test_agent_interpretation_dispatch_and_evidence(monkeypatch, selection):
+    import agent_planner
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", selection)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-key")
+    calls = []
+    sources = {"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}
+    def adapter(name):
+        def call(context, *args, **kwargs):
+            calls.append((name, context))
+            assert name == selection
+            assert context["result_ids"] == ["tool.1"]
+            assert context["evidence_index"]["tool.1"]["output"]["result"]["value"] == 7
+            return {"model": name, "provider": name, "source": sources[name], "is_mock": False,
+                    "structured": {"sections": [{"title": title, "content": "Review the computed result."}
+                                                  for title in ask_muse.REQUIRED_TITLES], "claims": []}}
+        return call
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", adapter("nvidia"))
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", adapter("ollama"))
+    monkeypatch.setattr(ask_muse, "generate_interpretation", adapter("baseten"))
+    digest = {"tool_results": [{"ok": True, "tool": "fit_curve", "result": {"value": 7}}]}
+    result = agent_planner.generate_grounded_interpretation(digest)
+    assert len(calls) == 1 and result["source"] == sources[selection]
+    assert result["is_mock"] is False and result["grounding_check"]["pass"]
+
+
+def test_agent_interpretation_rejects_unknown_evidence(monkeypatch):
+    import agent_planner
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "nvidia")
+    def fake(context, *args, **kwargs):
+        report = {"sections": [{"title": title, "content": "Review the result."}
+                               for title in ask_muse.REQUIRED_TITLES],
+                  "claims": [{"claim": "Result", "evidence": "result", "evidence_type": "computed",
+                              "confidence_or_uncertainty": "unknown", "limitation": "review needed",
+                              "proposed_verification": "Repeat", "evidence_ids": ["invented.id"]}]}
+        return {"model": "fake", "provider": "NVIDIA NIM", "source": "hosted_model",
+                "is_mock": False, "structured": report}
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", fake)
+    digest = {"tool_results": [{"ok": True, "result": {"value": 7}}]}
+    assert agent_planner.generate_grounded_interpretation(digest)["rejected"] is True

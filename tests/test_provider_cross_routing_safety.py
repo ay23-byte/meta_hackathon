@@ -18,8 +18,12 @@ def test_legacy_adapter_never_calls_baseten_for_another_selection(monkeypatch, m
     if mode not in ("nvidia", "ollama"):
         with pytest.raises(agent_planner.PlannerUnavailable):
             agent_planner.request_agent_plan({})
-    with pytest.raises(RuntimeError, match="selected provider"):
-        agent_planner.generate_grounded_interpretation({})
+    if mode in ("nvidia", "ollama"):
+        # With no executed evidence there can be no provider report request.
+        assert agent_planner.generate_grounded_interpretation({}) is None
+    else:
+        with pytest.raises(RuntimeError, match="selected provider"):
+            agent_planner.generate_grounded_interpretation({})
 
 
 def test_cli_unsupported_selection_preserves_analysis_without_using_baseten(monkeypatch, tmp_path):

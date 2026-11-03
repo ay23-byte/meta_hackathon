@@ -70,3 +70,26 @@ def test_agent_works_without_api_key_and_stays_offline():
     assert not at.exception
     metrics = {metric.label: metric.value for metric in at.metric}
     assert "deterministic fallback" in metrics["Plan source"]
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "baseten", "ollama"])
+def test_agent_ai_requires_button_on_each_rerun(monkeypatch, mode):
+    import agent_planner
+    import provider_router
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    calls = []
+    def fake_plan(prompt, **kwargs):
+        calls.append(mode)
+        raise RuntimeError("mock failure")
+    monkeypatch.setattr(provider_router, "request_plan", fake_plan)
+    monkeypatch.setattr(agent_planner, "generate_grounded_interpretation", lambda digest: None)
+    at = run_app()
+    next(c for c in at.checkbox if c.label.startswith("Run the bounded analysis agent")).check().run()
+    next(c for c in at.checkbox if c.label.startswith("Let Muse Spark propose")).check().run()
+    assert calls == []
+    next(b for b in at.button if b.label == "Run agent AI now").click().run()
+    assert calls == [mode]
+    at.run()
+    assert calls == [mode]
+    assert not at.exception

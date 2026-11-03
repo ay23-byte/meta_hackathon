@@ -290,31 +290,45 @@ def grounding_check(text: str, results: list[dict]) -> dict:
 
 
 def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
-    """Optional Muse Spark report built ONLY from executed tool outputs."""
-    provider_config.require_baseten_selection()
-    if not provider_config.get_api_key():
+    """Request a report from the selected provider, grounded in executed outputs."""
+    mode = provider_config.selected_ai_provider()
+    if mode not in ("", "baseten", "nvidia", "ollama"):
+        raise RuntimeError("The selected provider is unsupported; no provider request was made.")
+    results = audit_digest.get("tool_results") or []
+    evidence = {f"tool.{i}": {"label": "Executed tool output", "output": item}
+                for i, item in enumerate(results[:12], 1) if isinstance(item, dict) and item.get("ok")}
+    if not evidence:
         return None
     context = {
         "note": "Use only these executed tool outputs. Never invent numbers.",
         "dataset": audit_digest.get("dataset"),
         "research_question": audit_digest.get("research_question"),
         "quality": audit_digest.get("quality_summary"),
-        "tool_results": audit_digest.get("tool_results"),
+        "tool_results": results,
         "decisions": audit_digest.get("decisions"),
         "final_state": audit_digest.get("final", {}).get("state"),
+        "result_ids": list(evidence), "evidence_index": evidence,
     }
     try:
-        wrapper = ask_muse.generate_interpretation(context)
+        wrapper = provider_router.generate_interpretation(context, confirmed=True)
+        structured = ask_muse.validate_report(wrapper.get("structured"),
+                                              allowed_evidence_ids=context["result_ids"])
+        if structured is None:
+            return {"rejected": True}
+        from ai_guard import check_report_numbers
+        guard = check_report_numbers(structured, context)
+        if guard["status"] == "contradiction":
+            return {"rejected": True, "numeric_guard": guard}
+        prose = " ".join(section.get("content", "") for section in structured["sections"])
+        prose += " " + " ".join(str(value) for claim in structured.get("claims", [])
+                                  for key, value in claim.items() if key != "evidence_ids")
+        check = grounding_check(prose, results)
+        if not check["pass"]:
+            return {"rejected": True, "grounding_check": check}
+        return {**wrapper, "structured": structured, "evidence_index": evidence,
+                "numeric_guard": guard, "grounding_check": check}
     except (ValueError, RuntimeError):
-        return None
-    prose = " ".join(
-        section.get("content", "") for section in wrapper["structured"]["sections"]
-    )
-    check = grounding_check(prose, context["tool_results"])
-    if not check["pass"]:
-        return {"rejected": True, "grounding_check": check}
-    return {"model": wrapper.get("model"), "structured": wrapper["structured"],
-            "grounding_check": check}
+        return {"rejected": True, "error": "Provider unavailable or report validation failed."}
 
 
 def deterministic_conclusion(audit_digest: dict) -> str:

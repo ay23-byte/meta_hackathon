@@ -1683,11 +1683,11 @@ st.caption("Plan -> strict validation -> allowlisted tool execution -> diagnosti
 
 agent_audit_files: dict[str, bytes] = {}
 agent_consent = st.checkbox(
-    "Run the bounded analysis agent (consent: may call Muse Spark when a key is configured)",
+    "Run the bounded analysis agent (separate consent from AI calls)",
     value=False, key="agent_run_consent",
 )
 agent_use_ai = st.checkbox(
-    "Let Muse Spark propose the plan and the final interpretation", value=False,
+    "Let Muse Spark propose the plan or use the selected provider for planning and interpretation (may incur charges)", value=False,
     key="agent_use_ai",
 )
 agent_destructive = st.checkbox(
@@ -1695,13 +1695,11 @@ agent_destructive = st.checkbox(
     value=False, key="agent_destructive_consent",
 )
 
-if agent_consent:
-    if agent_use_ai and selected_mode not in ("", "baseten"):
-        st.warning("The agent AI path does not yet support the selected provider. No AI provider will be called; the deterministic agent will run.")
+if agent_consent and (not agent_use_ai or st.button("Run agent AI now")):
     with st.spinner("Running bounded agent workflow..."):
         try:
             agent_run = AnalysisOrchestrator(OrchestratorConfig(
-                use_ai=bool(agent_use_ai and selected_mode in ("", "baseten") and provider_config.get_api_key()),
+                use_ai=bool(agent_use_ai),
                 user_confirmed=agent_destructive,
                 research_question=question,
             )).run(load)

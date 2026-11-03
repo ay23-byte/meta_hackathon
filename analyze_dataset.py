@@ -24,7 +24,6 @@ from pathlib import Path
 import numpy as np
 
 import ask_muse
-import provider_config
 import provider_router
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
@@ -377,7 +376,7 @@ def main(argv=None):
     if (result.get("ai") or {}).get("is_mock"):
         print("OFFLINE MOCK report written (deterministic template, NOT Muse Spark, NOT AI).")
     if args.agent:
-        use_ai = bool(args.agent_use_ai and provider_config.get_api_key())
+        use_ai = bool(args.agent_use_ai)
         try:
             agent_summary = run_agent(
                 args.csv, args.output_dir, use_ai=use_ai,
