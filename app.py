@@ -299,23 +299,26 @@ with st.sidebar:
 
     st.divider()
     st.subheader("AI provider status")
-    _api_key_configured = provider_config.api_key_status()["present"]
-    if _api_key_configured:
-        st.success("Muse Spark via Baseten is configured.")
+    if provider_config.selected_ai_provider() not in ("", "baseten"):
+        st.info("The selected provider is not yet supported by this legacy app; no provider request will be made here.")
     else:
-        st.info(
-            "Muse Spark via Baseten is not configured. Add "
-            "BASETEN_API_KEY to a local .env file to enable AI "
-            "interpretation. Calculations and exports remain available."
-        )
-    from ask_muse import MODEL
+        _api_key_configured = provider_config.api_key_status()["present"]
+        if _api_key_configured:
+            st.success("Muse Spark via Baseten is configured.")
+        else:
+            st.info(
+                "Muse Spark via Baseten is not configured. Add "
+                "BASETEN_API_KEY to a local .env file to enable AI "
+                "interpretation. Calculations and exports remain available."
+            )
+        from ask_muse import MODEL
 
-    st.caption(
-        f"Model: {MODEL} · Endpoint: "
-        "https://inference.baseten.co/v1 · Raw data and API key are "
-        "never sent as context."
-    )
-    st.caption("Built with Muse Spark Open.")
+        st.caption(
+            f"Model: {MODEL} · Endpoint: "
+            "https://inference.baseten.co/v1 · Raw data and API key are "
+            "never sent as context."
+        )
+        st.caption("Built with Muse Spark Open.")
 
     st.divider()
     st.subheader("Workflow")
@@ -690,6 +693,8 @@ def stored_live_report():
     compatibility; an explicitly labelled mock is not reused by the live
     action and is not displayed as a Muse Spark report.
     """
+    if provider_config.selected_ai_provider() not in ("", "baseten"):
+        return None
     report = st.session_state.get("lablens_ai_report")
     if st.session_state.get("lablens_ai_context_hash") != current_hash:
         return None
@@ -709,6 +714,8 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
     if existing_report:
         st.info("A validated report for this exact analysis is already available; "
                 "no duplicate provider request was sent.")
+    elif provider_config.selected_ai_provider() not in ("", "baseten"):
+        st.warning("This legacy app cannot use the selected provider yet; no provider request was made. Use the general workspace for NVIDIA or Ollama.")
     elif not provider_config.get_api_key():
         st.warning(
             "BASETEN_API_KEY is not set. Numerical analysis and downloads "

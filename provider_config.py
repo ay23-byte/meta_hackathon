@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 
@@ -149,6 +150,12 @@ def selected_ai_provider() -> str:
     return ""
 
 
+def require_baseten_selection() -> None:
+    """Fail closed before a legacy adapter can contact an unintended provider."""
+    if selected_ai_provider() not in ("", "baseten"):
+        raise RuntimeError("The selected provider cannot be used by the legacy Baseten adapter; no provider request was made.")
+
+
 def setting_source(name: str) -> str:
     """Human-readable, secret-free origin of a configured setting."""
     if name in os.environ:
@@ -222,6 +229,26 @@ def get_report_token_budget() -> int:
 def get_model() -> str:
     """Return the configured model, honoring process-env precedence."""
     return get_setting(MODEL_ENV, DEFAULT_MODEL)
+
+
+def get_ollama_model() -> str:
+    """Configured local model, preserving explicit blank overrides."""
+    return get_setting("OLLAMA_MODEL", "llama3.2:1b")
+
+
+def get_ollama_host() -> str:
+    """Return a loopback-only Ollama origin, never a remote endpoint."""
+    host = get_setting("OLLAMA_HOST", "http://127.0.0.1:11434")
+    try:
+        parts = urlsplit(host)
+        if (parts.scheme != "http" or parts.hostname not in {"localhost", "127.0.0.1", "::1"}
+                or parts.username is not None or parts.password is not None
+                or parts.path not in ("", "/") or parts.query or parts.fragment
+                or parts.port is None):
+            raise ValueError
+    except ValueError:
+        raise ValueError("OLLAMA_HOST must be an HTTP loopback origin with an explicit port and no credentials or path.") from None
+    return host.rstrip("/")
 
 
 def secret_values() -> list[str]:

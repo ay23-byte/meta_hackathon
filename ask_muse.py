@@ -589,6 +589,7 @@ def check_provider_connectivity() -> None:
     Success means only that a non-empty response was received; it does not
     validate the structured-report workflow. No retries or raw error text.
     """
+    provider_config.require_baseten_selection()
     api_key = provider_config.get_api_key()
     if not api_key:
         raise RuntimeError("BASETEN_API_KEY is not configured; set it locally before checking connectivity.")
@@ -824,6 +825,7 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     additionally carry ``source="live_provider"``; no mock is ever returned
     from this function.
     """
+    provider_config.require_baseten_selection()
     # Validate the local report configuration first: a bad section request is
     # a caller error, not a missing-credential or provider failure.
     titles = resolve_section_titles(section_titles, profile=profile)

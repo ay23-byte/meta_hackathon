@@ -108,6 +108,10 @@ def _extract_json(text: str) -> dict:
 def request_agent_plan(quality: dict, manifest: list[dict] | None = None,
                        research_question: str | None = None) -> dict:
     """Ask Muse Spark for a plan. Raises PlannerUnavailable on any failure."""
+    try:
+        provider_config.require_baseten_selection()
+    except RuntimeError as exc:
+        raise PlannerUnavailable(str(exc)) from None
     api_key = provider_config.get_api_key()
     if not api_key:
         raise PlannerUnavailable("BASETEN_API_KEY is not configured")
@@ -310,6 +314,7 @@ def grounding_check(text: str, results: list[dict]) -> dict:
 
 def generate_grounded_interpretation(audit_digest: dict) -> dict | None:
     """Optional Muse Spark report built ONLY from executed tool outputs."""
+    provider_config.require_baseten_selection()
     if not provider_config.get_api_key():
         return None
     context = {

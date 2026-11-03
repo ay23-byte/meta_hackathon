@@ -60,7 +60,8 @@ def isolate_provider_environment(request, monkeypatch, tmp_path):
                  "LABLENS_API_KEY", "LABLENS_BASE_URL", "LABLENS_MODEL",
                  "LABLENS_MAX_OUTPUT_TOKENS", "LABLENS_TIMEOUT_SECONDS",
                  "LABLENS_CONNECT_TIMEOUT_SECONDS", "LABLENS_READ_TIMEOUT_SECONDS",
-                 "LABLENS_NVIDIA_STREAM", "LABLENS_NVIDIA_CATALOG_RETRIES", "BLUESMINDS_API_KEY"):
+                 "LABLENS_NVIDIA_STREAM", "LABLENS_NVIDIA_CATALOG_RETRIES", "BLUESMINDS_API_KEY",
+                 "OLLAMA_HOST", "OLLAMA_MODEL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("LABLENS_REPORT_MAX_TOKENS", raising=False)
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")

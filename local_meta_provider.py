@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 import ask_muse
+import provider_config
 from ai_guard import check_report_numbers
 
 BASE_URL = "http://127.0.0.1:11434"
@@ -30,7 +31,7 @@ def _request(path: str, payload: dict | None = None, *, timeout: int = TIMEOUT) 
     if path not in ("/api/tags", "/api/chat"):
         raise ValueError("Unsupported Ollama API path.")
     body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8") if payload is not None else None
-    request = urllib.request.Request(BASE_URL + path, data=body,
+    request = urllib.request.Request(provider_config.get_ollama_host() + path, data=body,
                                      headers={"Content-Type": "application/json"},
                                      method="POST" if body is not None else "GET")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
@@ -44,9 +45,9 @@ def _request(path: str, payload: dict | None = None, *, timeout: int = TIMEOUT) 
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError):
             raise RuntimeError("Ollama request timed out; local analysis is still available.") from None
-        raise RuntimeError("Cannot connect to local Ollama at 127.0.0.1:11434. Start Ollama locally.") from None
+        raise RuntimeError("Cannot connect to the configured local Ollama service. Start Ollama locally.") from None
     except OSError:
-        raise RuntimeError("Cannot connect to local Ollama at 127.0.0.1:11434. Start Ollama locally.") from None
+        raise RuntimeError("Cannot connect to the configured local Ollama service. Start Ollama locally.") from None
     if len(raw) > MAX_RESPONSE_BYTES:
         raise RuntimeError("Ollama response exceeded the size limit.")
     try:
@@ -69,7 +70,7 @@ def check_ollama_status(model: str = MODEL) -> dict:
     _validate_model(model)
     try:
         data = _request("/api/tags", timeout=5)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {"running": False, "model_available": False, "message": str(exc)}
     models = data.get("models")
     if not isinstance(models, list):
