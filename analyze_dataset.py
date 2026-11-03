@@ -231,6 +231,10 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile,
                     research_question=research_question,
                 )
+            elif provider_config.selected_ai_provider() not in ("", "baseten"):
+                result["ai_note"] = ("The selected provider is not yet supported by this CLI report path; "
+                                     "no provider was called. Deterministic analysis is complete.")
+                wrapper = None
             elif not provider_config.get_api_key():
                 result["ai_note"] = ("AI was requested but BASETEN_API_KEY is not configured; "
                                      "deterministic analysis is complete. Use --ai-mock for a "

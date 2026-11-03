@@ -233,10 +233,12 @@ def main(argv=None) -> int:
             print(f"{key:12s} {case['title']:32s} -> {case['expected_state']}")
             print(f"             {case['expected_behaviour']}")
         return 0
-    use_ai = bool(args.use_ai and provider_config.get_api_key())
+    legacy_selected = provider_config.selected_ai_provider() in ("", "baseten")
+    use_ai = bool(args.use_ai and legacy_selected and provider_config.get_api_key())
     if args.use_ai and not use_ai:
-        print("Note: --use-ai requested but BASETEN_API_KEY is unset; using the offline planner.",
-              file=sys.stderr)
+        message = ("Note: --use-ai requested but BASETEN_API_KEY is unset; using the offline planner."
+                   if legacy_selected else "Note: agent AI does not support the selected provider yet; using the offline planner.")
+        print(message, file=sys.stderr)
     ids = list(CASES) if args.case == "all" else [args.case]
     results = {}
     for case_id in ids:
