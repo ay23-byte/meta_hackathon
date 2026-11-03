@@ -70,7 +70,9 @@ def _config() -> dict:
         raise ValueError("Configuration must not place the API key in the URL or model identifier.")
     if not model or is_placeholder(model) or len(model) > 200 or any(ord(c) < 33 or ord(c) > 126 for c in model):
         raise ValueError(f"{NVIDIA_MODEL_ENV if mode == 'nvidia' else 'LABLENS_MODEL'} must be a nonempty model identifier.")
-    tokens = _setting("LABLENS_MAX_OUTPUT_TOKENS", "512" if mode == "nvidia" else "2048")
+    # Muse Glimmer spends part of its output budget on reasoning. Keep enough
+    # room for the final structured report; users can lower this explicitly.
+    tokens = _setting("LABLENS_MAX_OUTPUT_TOKENS", "8192" if mode == "nvidia" else "2048")
     timeout = _setting("LABLENS_TIMEOUT_SECONDS", "120" if mode == "nvidia" else "60")
     connect_timeout = _setting("LABLENS_CONNECT_TIMEOUT_SECONDS", "30" if mode == "nvidia" else "10")
     read_timeout = _setting("LABLENS_READ_TIMEOUT_SECONDS", "300" if mode == "nvidia" and "LABLENS_TIMEOUT_SECONDS" not in os.environ else timeout)
@@ -273,7 +275,9 @@ def _request_content(config: dict, prompt: str) -> tuple[str, str]:
         if config["mode"] == "nvidia":
             stage = "model_catalog"
             catalog_status = _catalog_with_retries(client, config["model"], config["catalog_retries"])
-            request.update(temperature=0.2, top_p=1)
+            # NVIDIA's Muse Glimmer API recommends sampled decoding (temperature
+            # 0.95, top_p 1). Greedy/low-temperature settings degrade reasoning.
+            request.update(temperature=0.95, top_p=1)
         stage = "initial_response"
         response = client.chat.completions.create(**request)
         if config["stream"]:
