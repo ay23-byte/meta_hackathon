@@ -28,6 +28,7 @@ def valid_ai_wrapper():
                 {
                     "claim": "The slope is positive.",
                     "evidence": "Computed OLS slope.",
+                    "evidence_ids": ["legacy.results"],
                     "evidence_type": "computed_result",
                     "confidence_or_uncertainty": "Not calibrated.",
                     "limitation": "Eleven points only.",
@@ -57,6 +58,7 @@ def all_caption_text(at):
 @pytest.fixture(autouse=True)
 def no_api_key(monkeypatch):
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
     # A stale .env in a developer checkout must not turn unit tests into
     # live API calls; the app loads .env at import time.
     yield
@@ -314,3 +316,46 @@ def test_provider_failure_is_shown_without_leaking_the_key(monkeypatch):
     assert any("Muse Spark request failed" in text for text in errors)
     assert all(secret not in text for text in errors)
     assert len(at.get("download_button")) == 3
+
+
+@pytest.mark.parametrize("mode", [None, "nvidia", "baseten", "ollama"])
+def test_legacy_ui_routes_selected_provider_and_validates_evidence(monkeypatch, mode):
+    import ask_muse
+    import hosted_model_provider
+    import local_meta_provider
+
+    if mode is None:
+        monkeypatch.delenv("LABLENS_AI_PROVIDER", raising=False)
+        mode = "nvidia"
+    else:
+        monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-baseten-key")
+    calls = []
+    def adapter(name):
+        def generate(context, *args, **kwargs):
+            calls.append(name)
+            assert name == mode
+            assert set(context["result_ids"]) == set(context["evidence_index"])
+            wrapper = valid_ai_wrapper()
+            wrapper.update(source={"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}[mode],
+                           provider={"nvidia": "NVIDIA NIM", "baseten": "Baseten", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"]}[mode],
+                           model={"nvidia": "meta/muse-glimmer-30b", "baseten": "muse", "ollama": "llama3.2:1b"}[mode],
+                           is_mock=False)
+            return wrapper
+        return generate
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", adapter("nvidia"))
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", adapter("ollama"))
+    monkeypatch.setattr(ask_muse, "generate_interpretation", adapter("baseten"))
+    at = run_app()
+    if mode == "nvidia":
+        at.button[0].click().run()
+        assert calls == []
+        next(c for c in at.checkbox if c.label.startswith("I consent to send this analysis")).check().run()
+    at.button[0].click().run()
+    assert calls == [mode] and not at.exception and not at.error
+    result = at.session_state["lablens_ai_report"]
+    assert result["source"] == {"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}[mode]
+    assert result["is_mock"] is False
+    assert result["structured"]["claims"][0]["evidence_ids"] == ["legacy.results"]
+    at.button[0].click().run()
+    assert calls == [mode]

@@ -14,6 +14,11 @@ CONTEXT = {"result_ids": ["fit.linear"], "evidence_index": {"fit.linear": {"slop
                    "metrics": {"r2": 1.0, "rmse": 0.0}, "n_observations": 12}}
 
 
+@pytest.fixture(autouse=True)
+def select_local_provider(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
+
+
 def stub_report():
     return ask_muse.generate_mock_report(CONTEXT, profile="legacy")["structured"]
 
@@ -94,6 +99,7 @@ def test_network_failures_and_timeout_are_safe(monkeypatch):
 
 
 def test_ui_never_calls_ollama_until_explicit_button(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
     calls = []
     def fake(context, titles, profile, model):
         calls.append(context)
@@ -176,6 +182,7 @@ def test_selected_3b_model_is_checked_used_and_recorded(monkeypatch):
 
 
 def test_ui_switching_model_marks_local_report_stale(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "ollama")
     calls = []
     def fake(context, titles, profile, model):
         calls.append(model)
@@ -192,3 +199,43 @@ def test_ui_switching_model_marks_local_report_stale(monkeypatch):
     next(s for s in app.selectbox if s.label == "Local Ollama model").select("llama3.2:1b").run()
     assert calls == ["llama3.2:3b"]
     assert any("Local report is stale" in c.value for c in app.caption)
+
+
+@pytest.mark.parametrize("host", ["http://example.com:11434", "http://localhost:11434/path",
+                                  "https://localhost:11434", "http://user:pass@localhost:11434",
+                                  "http://localhost:11434?token=value", "", "http://127.0.0.2:11434"])
+def test_configured_ollama_host_rejects_nonlocal_or_unsafe_values(monkeypatch, host):
+    monkeypatch.setenv("OLLAMA_HOST", host)
+    monkeypatch.setattr(local.urllib.request, "build_opener", lambda *args: pytest.fail("invalid host attempted a request"))
+    with pytest.raises(ValueError, match="OLLAMA_HOST"):
+        local._request("/api/tags")
+
+
+def test_configured_ollama_loopback_port_used_without_proxy(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:11435/")
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, size):
+            return b'{"models": []}'
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request.full_url)
+            return Response()
+
+    monkeypatch.setattr(local.urllib.request, "build_opener", lambda *args: Opener())
+    assert local._request("/api/tags") == {"models": []}
+    assert requests == ["http://127.0.0.1:11435/api/tags"]
+
+
+def test_bad_local_host_status_fails_safely_without_network(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://example.invalid:11434")
+    monkeypatch.setattr(local.urllib.request, "build_opener", lambda *args: pytest.fail("unexpected network"))
+    status = local.check_ollama_status()
+    assert not status["running"] and not status["model_available"]
+    assert "OLLAMA_HOST" in status["message"]

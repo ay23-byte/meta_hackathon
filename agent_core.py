@@ -1,6 +1,6 @@
 """Bounded analysis orchestrator.
 
-Flow: inspect -> (Muse Spark or offline) plan -> strict validation -> execute
+Flow: inspect -> (selected provider or offline) plan -> strict validation -> execute
 allowlisted tools -> observe -> deterministic diagnostics -> bounded retry ->
 grounded interpretation -> audit trail. All numbers come from tool outputs.
 """
@@ -56,7 +56,7 @@ class AnalysisOrchestrator:
     def __init__(self, config: OrchestratorConfig | None = None, **kwargs):
         self.config = config or OrchestratorConfig(**kwargs)
         if self.config.use_ai is None:
-            self.config.use_ai = bool(provider_config.get_api_key())
+            self.config.use_ai = False
 
     # ------------------------------------------------------------------
     def run(self, load, frame: pd.DataFrame | None = None) -> AgentRun:
@@ -168,7 +168,7 @@ class AnalysisOrchestrator:
             if tool == "diagnose_fit" and params.get("fit_ref") == "fit_1" and fit_refs:
                 params["fit_ref"] = fit_refs[0]
             result = execute_tool(tool, params, ctx)
-            decision = ("AI-selected tool" if run.plan_source.startswith("muse")
+            decision = ("AI-selected tool" if not run.plan_source.startswith("deterministic")
                         else "validated plan step")
             seq = run.log_tool(result, phase="execute", decision=decision)
             if not result.ok:
@@ -252,7 +252,7 @@ class AnalysisOrchestrator:
                 "fit_ref": new_ref, "status": "executed",
             })
             tried_models.append(alternative)
-            run.log(phase="retry", actor="ai" if run.plan_source.startswith("muse") else "deterministic",
+            run.log(phase="retry", actor="ai" if not run.plan_source.startswith("deterministic") else "deterministic",
                     status="ok", result_digest={"alternative": alternative},
                     decision="validated plan alternative selected")
 
@@ -304,7 +304,9 @@ class AnalysisOrchestrator:
                     raw = planner.request_agent_plan(
                         quality, research_question=research_question
                     )
-                candidate_source = "muse_spark"
+                candidate_source = ("injected" if self.config.plan_provider is not None
+                                    else {"nvidia": "nvidia_nim", "ollama": "ollama", "hosted": "hosted"}.get(
+                                        provider_config.selected_ai_provider(), "muse_spark"))
             except Exception as exc:
                 run.log(phase="plan", actor="ai", status="unavailable",
                         result_digest={"error": type(exc).__name__},
@@ -315,9 +317,17 @@ class AnalysisOrchestrator:
             candidate_source = "deterministic_fallback"
 
         validation = planner.validate_plan(raw)
-        run.log(phase="plan", actor="ai" if candidate_source == "muse_spark" else "deterministic",
-                status="ok", result_digest={"plan": raw},
-                decision="AI plan proposed" if candidate_source == "muse_spark"
+        plan_digest = {"plan": raw}
+        if not candidate_source.startswith("deterministic"):
+            if self.config.plan_provider is not None:
+                plan_digest["provider"] = "injected"
+                plan_digest["model"] = None
+            else:
+                plan_digest["provider"] = provider_config.selected_ai_provider()
+                plan_digest["model"] = provider_config.redact(provider_config.get_model())[:200]
+        run.log(phase="plan", actor="ai" if not candidate_source.startswith("deterministic") else "deterministic",
+                status="ok", result_digest=plan_digest,
+                decision="AI plan proposed" if not candidate_source.startswith("deterministic")
                          else "deterministic plan generated")
         if not validation.accepted:
             run.log(phase="validate", actor="deterministic", status="rejected",

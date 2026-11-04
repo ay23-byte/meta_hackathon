@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 import ask_muse
+import provider_config
 from ai_guard import check_report_numbers
 
 BASE_URL = "http://127.0.0.1:11434"
@@ -27,10 +28,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _request(path: str, payload: dict | None = None, *, timeout: int = TIMEOUT) -> dict:
+    if provider_config.selected_ai_provider() != "ollama":
+        raise RuntimeError("Ollama is not the selected provider; no local request was made.")
     if path not in ("/api/tags", "/api/chat"):
         raise ValueError("Unsupported Ollama API path.")
     body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8") if payload is not None else None
-    request = urllib.request.Request(BASE_URL + path, data=body,
+    request = urllib.request.Request(provider_config.get_ollama_host() + path, data=body,
                                      headers={"Content-Type": "application/json"},
                                      method="POST" if body is not None else "GET")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
@@ -44,9 +47,9 @@ def _request(path: str, payload: dict | None = None, *, timeout: int = TIMEOUT) 
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError):
             raise RuntimeError("Ollama request timed out; local analysis is still available.") from None
-        raise RuntimeError("Cannot connect to local Ollama at 127.0.0.1:11434. Start Ollama locally.") from None
+        raise RuntimeError("Cannot connect to the configured local Ollama service. Start Ollama locally.") from None
     except OSError:
-        raise RuntimeError("Cannot connect to local Ollama at 127.0.0.1:11434. Start Ollama locally.") from None
+        raise RuntimeError("Cannot connect to the configured local Ollama service. Start Ollama locally.") from None
     if len(raw) > MAX_RESPONSE_BYTES:
         raise RuntimeError("Ollama response exceeded the size limit.")
     try:
@@ -69,7 +72,7 @@ def check_ollama_status(model: str = MODEL) -> dict:
     _validate_model(model)
     try:
         data = _request("/api/tags", timeout=5)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {"running": False, "model_available": False, "message": str(exc)}
     models = data.get("models")
     if not isinstance(models, list):
@@ -116,6 +119,8 @@ def generate_scientific_report(context: dict, section_titles=None, *, profile=as
     prompt = ask_muse.build_prompt(context, titles, profile=profile).replace(
         "You are Muse Spark, an assistant for scientific experiment analysis.",
         f"You are {SUPPORTED_MODELS[model]}, a local assistant for scientific experiment analysis.", 1)
+    if provider_config.redact(prompt) != prompt:
+        raise ValueError("Analysis context contains credential material; no local request was made.")
     allowed_ids = ask_muse._allowed_evidence_ids(context.get("result_ids"))
     schema = _report_schema(titles, sorted(allowed_ids) if allowed_ids else None)
     status = check_ollama_status(model)
@@ -132,6 +137,8 @@ def generate_scientific_report(context: dict, section_titles=None, *, profile=as
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Ollama returned no visible report content.")
+    if provider_config.redact(content) != content:
+        raise RuntimeError("Local output contains credential material; no report was stored.")
     structured = ask_muse.validate_report(content, titles, profile=profile,
                                           allowed_evidence_ids=context.get("result_ids"))
     if structured is None:

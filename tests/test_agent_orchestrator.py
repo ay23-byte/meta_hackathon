@@ -116,7 +116,7 @@ def test_two_different_valid_ai_plans_produce_different_tool_sequences():
 
     first = with_plan(ai_plan(first_tool="outlier_scan"))
     second = with_plan(ai_plan(first_tool="profile_columns"))
-    assert first["plan_source"] == second["plan_source"] == "muse_spark"
+    assert first["plan_source"] == second["plan_source"] == "injected"
     assert first["plan_hash"] != second["plan_hash"]
     assert "outlier_scan" in tools(first) and "outlier_scan" not in tools(second)
     assert "profile_columns" in tools(second) and "profile_columns" not in tools(first)
@@ -226,3 +226,18 @@ def test_numerical_outputs_equal_direct_deterministic_calls():
     assert fit_event["result_digest"]["parameters"]["slope"] == pytest.approx(
         expected.parameters["slope"]
     )
+
+
+@pytest.mark.parametrize("selection,source", [("nvidia", "nvidia_nim"), ("ollama", "ollama"),
+                                               ("baseten", "muse_spark")])
+def test_plan_audit_records_selected_provider(monkeypatch, selection, source):
+    import json
+
+    import provider_router
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", selection)
+    monkeypatch.setattr(provider_router, "request_plan", lambda *args, **kwargs: json.dumps(ai_plan()))
+    config = OrchestratorConfig(use_ai=True, interpretation_provider=lambda digest: None)
+    data = AnalysisOrchestrator(config).run(load("case_a_linear.csv")).to_dict()
+    assert data["plan_source"] == source
+    assert any(event["phase"] == "plan" and event["actor"] == "ai" for event in data["events"])

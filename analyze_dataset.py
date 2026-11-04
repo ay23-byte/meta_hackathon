@@ -25,6 +25,7 @@ import numpy as np
 
 import ask_muse
 import provider_config
+import provider_router
 from agent_core import AnalysisOrchestrator, OrchestratorConfig
 from cleaning import apply_cleaning, build_plan, paired_values
 from column_inference import infer_columns, suggest_roles
@@ -44,6 +45,7 @@ from statistics_core import (
     describe_numeric,
     descriptive_table,
     outlier_diagnostics,
+    residual_outlier_diagnostics,
 )
 from visualization_core import build_chart, render_png
 
@@ -155,6 +157,9 @@ def analyze_csv(
     corr = correlation(x_values, y_values, method=correlation_method)
     cov = covariance(x_values, y_values)
     outliers = outlier_diagnostics(y_values)
+    # Complement raw-value IQR screening with fit-residual screening. Neither
+    # diagnostic removes data; both retain indices in the fitted pair sequence.
+    outliers["fit_residuals"] = residual_outlier_diagnostics(x_values, y_values, fit.as_dict())
     domain_result = apply_domain(domain, fit, {
         "x": x_col, "y": y_col, "x_label": x_label, "y_label": y_label,
         "unit_x": unit_x, "unit_y": unit_y,
@@ -231,21 +236,12 @@ def analyze_csv(
                     context, section_titles=titles, profile=report_profile,
                     research_question=research_question,
                 )
-            elif not provider_config.get_api_key():
-                result["ai_note"] = ("AI was requested but BASETEN_API_KEY is not configured; "
-                                     "deterministic analysis is complete. Use --ai-mock for a "
-                                     "clearly labelled offline preview.")
-                wrapper = None
-            elif report_profile == ask_muse.DEFAULT_REPORT_PROFILE:
-                wrapper = ask_muse.generate_interpretation(context, section_titles=titles)
             else:
-                wrapper = ask_muse.generate_interpretation(
-                    context, section_titles=titles, profile=report_profile
-                )
+                wrapper = provider_router.generate_interpretation(
+                    context, titles, profile=report_profile, confirmed=True)
             if wrapper is not None:
-                wrapper = ask_muse.enforce_report_provenance(
-                    wrapper, "mock" if generate_mock else "live"
-                )
+                if generate_mock:
+                    wrapper = ask_muse.enforce_report_provenance(wrapper, "mock")
                 structured = ask_muse.validate_report(
                     wrapper.get("structured"), titles, profile=report_profile,
                     allowed_evidence_ids=context.get("result_ids"),
@@ -261,8 +257,17 @@ def analyze_csv(
                     else:
                         result["ai"] = {**wrapper, "structured": structured, "numeric_guard": guard,
                                         "evidence_index": context.get("evidence_index", {})}
+        except provider_router.UnsupportedProviderError:
+            result["ai_note"] = "Unsupported provider selection; no provider was called."
         except (ValueError, RuntimeError) as exc:
-            result["ai_note"] = f"AI interpretation unavailable: {type(exc).__name__}."
+            # Never display untrusted exception text or provider responses.
+            mode = provider_config.selected_ai_provider()
+            hint = {"nvidia": "Check NVIDIA_API_KEY and provider availability.",
+                    "baseten": "Check BASETEN_API_KEY and provider availability.",
+                    "ollama": "Check the local Ollama service and model.",
+                    "hosted": "Check hosted configuration and availability."}.get(mode, "Check provider configuration.")
+            result["ai_note"] = (f"AI interpretation unavailable: {type(exc).__name__}; "
+                                 f"the selected provider may be unavailable or not configured. {hint}")
 
     destination = Path(output_dir) if output_dir else DEFAULT_OUTPUT
     destination.mkdir(parents=True, exist_ok=True)
@@ -381,7 +386,7 @@ def main(argv=None):
     if (result.get("ai") or {}).get("is_mock"):
         print("OFFLINE MOCK report written (deterministic template, NOT Muse Spark, NOT AI).")
     if args.agent:
-        use_ai = bool(args.agent_use_ai and provider_config.get_api_key())
+        use_ai = bool(args.agent_use_ai)
         try:
             agent_summary = run_agent(
                 args.csv, args.output_dir, use_ai=use_ai,

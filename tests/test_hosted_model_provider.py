@@ -216,7 +216,7 @@ def test_nvidia_success_and_request_parameters(monkeypatch):
     assert init["api_key"] == SECRET and init["max_retries"] == 0
     assert init["timeout"].connect == 30 and init["timeout"].read == 300
     assert request["model"] == TEST_MODEL
-    assert request["max_tokens"] == 512 and request["temperature"] == 0.2 and request["top_p"] == 1
+    assert request["max_tokens"] == 8192 and request["temperature"] == 0.95 and request["top_p"] == 1
     assert "extra_body" not in request
     assert result["provider"] == "NVIDIA NIM" and SECRET not in json.dumps(result)
     monkeypatch.setenv("LABLENS_MAX_OUTPUT_TOKENS", "1024")
@@ -283,7 +283,7 @@ def test_nvidia_evidence_validation(monkeypatch):
     candidate = report()
     candidate["sections"][0]["content"] = "slope=999"
     fake_client(monkeypatch, content=json.dumps(candidate))
-    with pytest.raises(RuntimeError, match="contradicts"):
+    with pytest.raises(RuntimeError, match="numerical/evidence guard|contradicts"):
         hosted.generate_interpretation(CONTEXT, confirmed=True)
 
 
@@ -331,7 +331,7 @@ def test_f_interpret_routes_nvidia_with_consent_and_preserves_provenance(monkeyp
     assert len(calls) == 2 and calls[0][1]["base_url"] == "https://integrate.api.nvidia.com/v1"
     req = calls[1][1]
     assert req["model"] == TEST_MODEL and "extra_body" not in req
-    assert req["temperature"] == 0.2 and req["top_p"] == 1 and req["max_tokens"] == 512
+    assert req["temperature"] == 0.95 and req["top_p"] == 1 and req["max_tokens"] == 8192
     assert any("NVIDIA NIM report" in x.value for x in app.markdown)
     assert app.session_state["ai_state"]["live"]["source"] == "hosted_model"
     assert app.session_state["hosted_verification"]["generation"] is True
@@ -537,8 +537,8 @@ def test_nvidia_sdk_uses_chat_completions_endpoint_offline(monkeypatch):
     assert [(r.method, r.url.path) for r in requests] == [("GET", "/v1/models"), ("POST", "/v1/chat/completions")]
     assert all(str(r.url).startswith("https://integrate.api.nvidia.com/") for r in requests)
     body = json.loads(requests[1].content)
-    assert body["model"] == TEST_MODEL and body["max_tokens"] == 512
-    assert body["temperature"] == 0.2 and body["top_p"] == 1
+    assert body["model"] == TEST_MODEL and body["max_tokens"] == 8192
+    assert body["temperature"] == 0.95 and body["top_p"] == 1
     assert SECRET not in json.dumps(result)
     client.close()
 
@@ -690,7 +690,7 @@ def test_provider_selection_process_precedence_and_file_fingerprint(monkeypatch,
     env_file.write_text("LABLENS_AI_PROVIDER=unknown\n", encoding="utf-8")
     assert provider_config.selected_ai_provider() == "unknown"
     monkeypatch.setenv("LABLENS_DISABLE_DOTENV", "1")
-    assert provider_config.selected_ai_provider() == ""
+    assert provider_config.selected_ai_provider() == "nvidia"
 
 
 def test_provider_change_clears_stale_error_without_call(monkeypatch, tmp_path):
@@ -925,3 +925,15 @@ def test_catalog_retries_connection_error_and_fingerprint(monkeypatch):
                 finish_reason="stop", message=SimpleNamespace(content=json.dumps(report())))])))))
     assert hosted.generate_interpretation(CONTEXT, confirmed=True)["model"] == TEST_MODEL
     assert len(calls) == 2
+
+def test_numeric_guard_error_exposes_safe_contradiction_details(monkeypatch):
+    configured(monkeypatch)
+    candidate = report()
+    candidate["sections"][0]["content"] = "The fitted slope is 999."
+    fake_client(monkeypatch, content=json.dumps(candidate))
+    with pytest.raises(RuntimeError, match="numerical/evidence guard") as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    message = str(error.value)
+    assert '"metric":"slope"' in message
+    assert "Explicit number conflicts" in message
+    assert SECRET not in message

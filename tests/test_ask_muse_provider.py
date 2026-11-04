@@ -277,7 +277,7 @@ def test_missing_key_fails_before_any_request(fake_provider, monkeypatch):
 
 
 def test_model_can_be_overridden_for_hackathon_accounts(fake_provider, monkeypatch):
-    created = fake_provider([make_response(as_content(valid_report()))])
+    created = fake_provider([make_response(as_content(valid_report()), model="meta-models/muse-spark-open-1026")])
     monkeypatch.setattr(ask_muse, "MODEL", "meta-models/muse-spark-open-1026")
     ask_muse.generate_interpretation(CONTEXT)
     assert created[0].calls[0]["model"] == "meta-models/muse-spark-open-1026"
@@ -464,3 +464,15 @@ def test_retry_after_respected_or_reported_without_early_retry(fake_provider, mo
     with pytest.raises(RuntimeError, match="Wait before retrying"):
         ask_muse.generate_interpretation(CONTEXT)
     assert len(created[-1].calls) == 1
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
+
+
+def test_report_rejects_mismatched_response_model(fake_provider):
+    fake_provider([make_response(as_content(valid_report()), model="other-provider-model")])
+    with pytest.raises(RuntimeError, match="different model identifier"):
+        ask_muse.generate_interpretation(CONTEXT)

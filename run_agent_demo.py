@@ -217,7 +217,7 @@ def build_parser():
     parser.add_argument("--case", default="all", choices=[*CASES, "all"])
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--use-ai", action="store_true",
-                        help="Let Muse Spark propose the plan (needs BASETEN_API_KEY).")
+                        help="Request a plan and interpretation from the selected provider; hosted calls may incur charges.")
     parser.add_argument("--user-confirmed", action="store_true",
                         help="Grant explicit confirmation for destructive tools.")
     parser.add_argument("--strict", action="store_true",
@@ -233,10 +233,10 @@ def main(argv=None) -> int:
             print(f"{key:12s} {case['title']:32s} -> {case['expected_state']}")
             print(f"             {case['expected_behaviour']}")
         return 0
-    use_ai = bool(args.use_ai and provider_config.get_api_key())
+    legacy_selected = provider_config.selected_ai_provider() in ("", "baseten")
+    use_ai = bool(args.use_ai and (not legacy_selected or provider_config.get_api_key()))
     if args.use_ai and not use_ai:
-        print("Note: --use-ai requested but BASETEN_API_KEY is unset; using the offline planner.",
-              file=sys.stderr)
+        print("Note: --use-ai requested but BASETEN_API_KEY is unset; using the offline planner.", file=sys.stderr)
     ids = list(CASES) if args.case == "all" else [args.case]
     results = {}
     for case_id in ids:

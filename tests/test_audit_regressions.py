@@ -1,6 +1,8 @@
 """Regression tests for independently identified audit findings."""
+
 import numpy as np
 import pandas as pd
+import pytest
 
 import ask_muse
 from fitting_core import compare_models, fit_linear, fit_polynomial
@@ -144,3 +146,9 @@ def test_connectivity_rejects_truncation_and_reasoning_only(monkeypatch):
     with pytest.raises(RuntimeError, match="no visible response") as error:
         ask_muse.check_provider_connectivity()
     assert "private" not in str(error.value)
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

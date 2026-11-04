@@ -11,6 +11,7 @@ APP = ROOT / "general_app.py"
 @pytest.fixture(autouse=True)
 def no_key(monkeypatch):
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
     yield
 
 
@@ -333,3 +334,49 @@ def test_overview_updates_after_explicit_mock_report():
     markup = "\n".join(item.value for item in at.markdown)
     assert "A labelled offline mock report is available." in markup
     assert "OFFLINE MOCK report" in markup
+
+
+@pytest.mark.parametrize("mode", [None, "nvidia", "baseten", "ollama"])
+def test_selected_provider_routes_report_via_shared_router(monkeypatch, mode):
+    import ask_muse
+    import hosted_model_provider
+    import local_meta_provider
+
+    if mode is None:
+        monkeypatch.delenv("LABLENS_AI_PROVIDER", raising=False)
+        mode = "nvidia"
+    else:
+        monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-baseten-key")
+    monkeypatch.setenv("NVIDIA_API_KEY", "unit-nvidia-key")
+    calls = []
+    def adapter(name):
+        def generate(context, titles=None, **kwargs):
+            calls.append(name)
+            assert name == mode
+            wrapper = ask_muse.generate_mock_report(context, titles, profile=kwargs.get("profile", "legacy"))
+            wrapper.update(source={"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}[name],
+                           model={"nvidia": "meta/muse-glimmer-30b", "baseten": "test-model", "ollama": "llama3.2:1b"}[name],
+                           provider={"nvidia": "NVIDIA NIM", "baseten": "Baseten", "ollama": local_meta_provider.SUPPORTED_MODELS["llama3.2:1b"]}[name],
+                           is_mock=False)
+            return wrapper
+        return generate
+    monkeypatch.setattr(hosted_model_provider, "generate_interpretation", adapter("nvidia"))
+    monkeypatch.setattr(local_meta_provider, "generate_scientific_report", adapter("ollama"))
+    monkeypatch.setattr(ask_muse, "generate_interpretation", adapter("baseten"))
+    at = run_app()
+    assert not at.exception
+    if mode == "nvidia":
+        next(c for c in at.checkbox if c.label.startswith("I confirmed the hosted endpoint")).check().run()
+    next(b for b in at.button if b.label == "Generate evidence-grounded interpretation").click().run()
+    assert calls == [mode]
+    assert not at.exception and not at.error
+    wrapper = at.session_state["ai_state"]["live"]
+    assert wrapper["source"] == {"nvidia": "hosted_model", "baseten": "live_provider", "ollama": "local_ollama"}[mode]
+    assert wrapper["is_mock"] is False
+
+
+def test_ollama_controls_disabled_for_other_selection(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
+    at = run_app()
+    assert next(c for c in at.checkbox if c.label == "Enable local Ollama controls").disabled

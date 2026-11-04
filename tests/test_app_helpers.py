@@ -148,6 +148,7 @@ def test_validated_ai_structure_sanitizes_provider_output():
 
 
 def test_context_hash_is_stable_and_binds_to_results_and_model(monkeypatch):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
     record = sample_record()
     explorer = [{"proposed_current_A (hypothetical)": 0.5}]
 

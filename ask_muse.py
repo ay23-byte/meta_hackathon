@@ -20,7 +20,7 @@ import provider_config
 # Official Baseten Model API identifier documented by Meta and Baseten.
 # Selected hackathon accounts may be told to use a dated variant; allow an
 # override without changing code. Never put a key in this file.
-MODEL = provider_config.get_model()
+MODEL = provider_config.get_baseten_model()
 BASE_URL = provider_config.BASE_URL
 
 REQUIRED_TITLES = (
@@ -589,6 +589,7 @@ def check_provider_connectivity() -> None:
     Success means only that a non-empty response was received; it does not
     validate the structured-report workflow. No retries or raw error text.
     """
+    provider_config.require_baseten_selection()
     api_key = provider_config.get_api_key()
     if not api_key:
         raise RuntimeError("BASETEN_API_KEY is not configured; set it locally before checking connectivity.")
@@ -824,6 +825,7 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     additionally carry ``source="live_provider"``; no mock is ever returned
     from this function.
     """
+    provider_config.require_baseten_selection()
     # Validate the local report configuration first: a bad section request is
     # a caller error, not a missing-credential or provider failure.
     titles = resolve_section_titles(section_titles, profile=profile)
@@ -831,6 +833,8 @@ def generate_interpretation(analysis_context, section_titles=None, *,
                   if isinstance(analysis_context, dict) else None)
     allowed_ids = _allowed_evidence_ids(result_ids)
     prompt = build_prompt(analysis_context, titles, profile=profile)
+    if provider_config.redact(prompt) != prompt:
+        raise ValueError("Analysis context contains credential material; no request was made.")
 
     api_key = provider_config.get_api_key()
     if not api_key:
@@ -890,7 +894,12 @@ def generate_interpretation(analysis_context, section_titles=None, *,
         raise RuntimeError("Muse Spark returned empty content; no final report was produced.")
     if len(content) > MAX_RAW_REPORT_CHARS:
         raise RuntimeError("Muse Spark returned an oversized response; it was rejected.")
+    if provider_config.redact(content) != content:
+        raise RuntimeError("Muse Spark returned credential material; no report was stored.")
 
+    reported_model = getattr(response, "model", None)
+    if reported_model is not None and reported_model != MODEL:
+        raise RuntimeError("Muse Spark returned a different model identifier; no report was stored.")
     structured = validate_report(
         content, titles, profile=profile, allowed_evidence_ids=allowed_ids
     )
@@ -908,7 +917,7 @@ def generate_interpretation(analysis_context, section_titles=None, *,
     return {
         "numeric_guard": guard,
         "evidence_index": analysis_context.get("evidence_index", {}),
-        "model": getattr(response, "model", None) or MODEL,
+        "model": MODEL,
         "source": LIVE_REPORT_SOURCE,
         "is_mock": False,
         "provider_status": "live_response_validated",

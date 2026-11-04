@@ -15,6 +15,7 @@ import streamlit as st
 
 import ask_muse
 import provider_config
+import provider_router
 from analysis_core import (
     analyze_linear,
     detect_candidate_columns,
@@ -87,7 +88,9 @@ def validated_ai_structure(report):
 
     if not isinstance(report, dict) or not isinstance(report.get("model"), str):
         return None
-    return validate_report(report.get("structured"))
+    evidence = report.get("evidence_index")
+    return validate_report(report.get("structured"),
+                           allowed_evidence_ids=list(evidence) if isinstance(evidence, dict) and evidence else None)
 
 
 def validate_ai_report(report):
@@ -137,7 +140,16 @@ def make_context_hash(record, explorer_records):
         "results": record["results"],
         "row_counts": record["row_counts"],
         "explorer": explorer_records,
-        "provider_model": MODEL,
+        "provider": provider_config.selected_ai_provider(),
+        "provider_model": (provider_config.get_nvidia_model() if provider_config.selected_ai_provider() == "nvidia"
+                           else provider_config.get_ollama_model() if provider_config.selected_ai_provider() == "ollama"
+                           else provider_config.get_model() if provider_config.selected_ai_provider() == "hosted"
+                           else MODEL),
+        "local_host": provider_config.get_setting("OLLAMA_HOST") if provider_config.selected_ai_provider() == "ollama" else "",
+        "hosted_endpoint_hash": (hashlib.sha256(provider_config.get_base_url().encode()).hexdigest()
+                                 if provider_config.selected_ai_provider() == "hosted" else ""),
+        "key_hash": (hashlib.sha256((provider_config.get_api_key() or "").encode()).hexdigest()
+                     if provider_config.selected_ai_provider() in ("nvidia", "baseten", "hosted") else ""),
     }
     encoded = json.dumps(
         payload, sort_keys=True, allow_nan=False
@@ -299,23 +311,28 @@ with st.sidebar:
 
     st.divider()
     st.subheader("AI provider status")
-    _api_key_configured = provider_config.api_key_status()["present"]
-    if _api_key_configured:
-        st.success("Muse Spark via Baseten is configured.")
+    if provider_config.selected_ai_provider() in ("nvidia", "ollama", "hosted"):
+        st.info(f"Selected provider: {provider_config.selected_ai_provider()}; availability has not been checked.")
+    elif provider_config.selected_ai_provider() not in ("", "baseten"):
+        st.warning("Unsupported provider selection; no provider request will be made.")
     else:
-        st.info(
-            "Muse Spark via Baseten is not configured. Add "
-            "BASETEN_API_KEY to a local .env file to enable AI "
-            "interpretation. Calculations and exports remain available."
-        )
-    from ask_muse import MODEL
+        _api_key_configured = provider_config.api_key_status()["present"]
+        if _api_key_configured:
+            st.success("Muse Spark via Baseten is configured.")
+        else:
+            st.info(
+                "Muse Spark via Baseten is not configured. Add "
+                "BASETEN_API_KEY to a local .env file to enable AI "
+                "interpretation. Calculations and exports remain available."
+            )
+        from ask_muse import MODEL
 
-    st.caption(
-        f"Model: {MODEL} · Endpoint: "
-        "https://inference.baseten.co/v1 · Raw data and API key are "
-        "never sent as context."
-    )
-    st.caption("Built with Muse Spark Open.")
+        st.caption(
+            f"Model: {MODEL} · Endpoint: "
+            "https://inference.baseten.co/v1 · Raw data and API key are "
+            "never sent as context."
+        )
+        st.caption("Built with Muse Spark Open.")
 
     st.divider()
     st.subheader("Workflow")
@@ -674,10 +691,10 @@ record["explorer"] = {
 # 8. Optional Muse Spark interpretation
 # ---------------------------------------------------------
 
-st.subheader("6 · Optional Muse Spark interpretation")
+st.subheader("6 · Optional AI interpretation")
 st.caption(
-    "When requested, the app sends a compact summary of the experiment to "
-    "Baseten. The raw CSV and API key are not intentionally sent as context."
+    "When requested, a compact experiment summary is sent to the selected provider. "
+    "Hosted requests may incur charges; review the context before sending it."
 )
 
 current_hash = make_context_hash(record, explorer_records)
@@ -693,15 +710,20 @@ def stored_live_report():
     report = st.session_state.get("lablens_ai_report")
     if st.session_state.get("lablens_ai_context_hash") != current_hash:
         return None
-    if not isinstance(report, dict) or report.get("is_mock"):
+    if not isinstance(report, dict) or report.get("is_mock") is not False:
         return None
     source = report.get("source")
-    if source not in (None, ask_muse.LIVE_REPORT_SOURCE):
+    expected = {"nvidia": "hosted_model", "hosted": "hosted_model", "baseten": ask_muse.LIVE_REPORT_SOURCE,
+                "": ask_muse.LIVE_REPORT_SOURCE, "ollama": "local_ollama"}.get(provider_config.selected_ai_provider())
+    if expected is None or source != expected:
         return None
     return report
 
 
 existing_report = stored_live_report()
+hosted_consent = False
+if provider_config.selected_ai_provider() in ("nvidia", "hosted"):
+    hosted_consent = st.checkbox("I consent to send this analysis to the hosted provider and understand it may incur charges", value=False)
 
 if st.button("Generate evidence-grounded interpretation", type="primary"):
     # A rerun alone never calls the provider. The in-flight flag and the
@@ -709,11 +731,10 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
     if existing_report:
         st.info("A validated report for this exact analysis is already available; "
                 "no duplicate provider request was sent.")
-    elif not provider_config.get_api_key():
-        st.warning(
-            "BASETEN_API_KEY is not set. Numerical analysis and downloads "
-            "remain available."
-        )
+    elif provider_config.selected_ai_provider() in ("nvidia", "hosted") and not hosted_consent:
+        st.warning("Confirm hosted request consent before generating a report.")
+    elif provider_config.selected_ai_provider() in ("", "baseten") and not provider_config.get_api_key():
+        st.warning("BASETEN_API_KEY is not set. Numerical analysis and downloads remain available.")
     elif st.session_state.get("lablens_ai_request_in_flight"):
         st.info("An AI request is already in progress for this session. "
                 "Wait for it to finish before retrying.")
@@ -721,8 +742,6 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
         st.session_state["lablens_ai_request_in_flight"] = True
         st.session_state.pop("lablens_ai_last_error", None)
         try:
-            from ask_muse import generate_interpretation
-
             context = {
                 "scientific_question": question,
                 "dataset": {
@@ -748,20 +767,34 @@ if st.button("Generate evidence-grounded interpretation", type="primary"):
                 "hypothetical_follow_up_candidates": explorer_records,
             }
 
-            with st.spinner("Requesting interpretation from Muse Spark..."):
-                ai_report = generate_interpretation(context)
-
-            if validate_ai_report(ai_report):
+            evidence = {"legacy.results": {"label": "Computed fit results", "values": record["results"]},
+                        "legacy.rows": {"label": "Input and retained row counts", "values": record["row_counts"]}}
+            context["result_ids"] = list(evidence)
+            context["evidence_index"] = evidence
+            context["fit"] = {"parameters": {"slope": record["results"]["slope"], "intercept": record["results"]["intercept"]},
+                              "metrics": {"r2": record["results"]["r_squared"], "rmse": record["results"]["rmse"]},
+                              "n_observations": record["results"]["n"]}
+            with st.spinner("Requesting interpretation from the selected provider..."):
+                ai_report = provider_router.generate_interpretation(context, confirmed=hosted_consent)
+            from ai_guard import check_report_numbers
+            validated = ask_muse.validate_report(ai_report.get("structured"), allowed_evidence_ids=context["result_ids"])
+            guard = check_report_numbers(validated, context) if validated else {"status": "contradiction"}
+            if validated and guard["status"] != "contradiction":
+                ai_report["structured"] = validated
+                ai_report["numeric_guard"] = guard
+                ai_report["evidence_index"] = evidence
+            if validated and guard["status"] != "contradiction" and validate_ai_report(ai_report):
                 st.session_state["lablens_ai_report"] = ai_report
                 st.session_state["lablens_ai_context_hash"] = current_hash
                 st.session_state.pop("lablens_ai_last_error", None)
             else:
                 st.session_state["lablens_ai_last_error"] = "incomplete report"
-                st.error("Muse Spark returned an incomplete report.")
+                st.error("The provider returned an incomplete report or contradictory evidence.")
 
         except Exception as exc:
             st.session_state["lablens_ai_last_error"] = provider_config.redact(str(exc))
-            st.error(f"Muse Spark request failed: {provider_config.redact(str(exc))}")
+            name = "Muse Spark" if provider_config.selected_ai_provider() in ("", "baseten") else "AI provider"
+            st.error(f"{name} request failed: {provider_config.redact(str(exc))}")
         finally:
             st.session_state.pop("lablens_ai_request_in_flight", None)
 
@@ -782,10 +815,12 @@ ai_structure = validated_ai_structure(ai_report) if ai_report else None
 
 if ai_structure:
     record["ai_interpretation_generated"] = True
-    record["ai_provider_model"] = f"Baseten / {ai_report['model']}"
+    record["ai_provider_model"] = f"{ai_report.get('provider', provider_config.selected_ai_provider() or 'Baseten')} / {ai_report['model']}"
     record["ai_interpretation"] = ai_structure
+    record["ai_evidence_index"] = ai_report.get("evidence_index", {})
+    record["ai_provenance"] = {key: ai_report.get(key) for key in ("provider", "model", "source", "is_mock")}
 
-    st.markdown("### Muse Spark report")
+    st.markdown(f"### {'Muse Spark' if provider_config.selected_ai_provider() in ('', 'baseten') else provider_config.selected_ai_provider()} report")
     st.caption(
         "AI statements are not independently verified. Check every claim "
         "against the numerical results and original experiment. Content is "
@@ -844,7 +879,7 @@ are extrapolations and are not validated by these data.
 """
 
 if ai_structure:
-    report += "\n## Muse Spark interpretation\n\n"
+    report += "\n## AI interpretation (unverified)\n\n"
     report += "AI-generated; not independently verified.\n\n"
     import html
     report += "```json\n" + html.escape(json.dumps(

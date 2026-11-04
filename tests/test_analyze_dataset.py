@@ -189,3 +189,9 @@ def test_cli_rejects_unrepresentable_inverse_variance(tmp_path):
     source.write_text("x,y,sigma\n1,2,1e-200\n2,4,1e-200\n3,6,1e-200\n", encoding="utf-8")
     with pytest.raises(ValueError, match="numerical range"):
         analyze_dataset.analyze_csv(source, tmp_path / "out", x="x", y="y", uncertainty="sigma")
+
+
+@pytest.fixture(autouse=True)
+def select_baseten_for_legacy_tests(monkeypatch):
+    """Exercise the Baseten adapter explicitly rather than relying on a default."""
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")

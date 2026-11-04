@@ -41,6 +41,7 @@ def test_all_cases_in_strict_mode(tmp_path, capsys):
 
 
 def test_ai_flag_without_key_falls_back_to_offline(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", "baseten")
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     assert run_agent_demo.main(["--case", "a", "--use-ai", "--strict",
                                 "--output-dir", str(tmp_path)]) == 0
@@ -58,3 +59,40 @@ def test_agent_cli_flag_writes_audit_next_to_standard_artifacts(tmp_path, capsys
     assert "Agent state: DONE" in printed
     assert (tmp_path / "agent" / "agent_audit.json").is_file()
     assert (tmp_path / "results.json").is_file()
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "ollama", "baseten"])
+def test_demo_ai_flag_reaches_selected_router(monkeypatch, tmp_path, mode):
+    import provider_router
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-key")
+    calls = []
+    def fake_plan(prompt, **kwargs):
+        calls.append(mode)
+        raise RuntimeError("mock unavailable")
+    monkeypatch.setattr(provider_router, "request_plan", fake_plan)
+    assert run_agent_demo.main(["--case", "a", "--use-ai", "--output-dir", str(tmp_path)]) == 0
+    assert calls == [mode]
+    data = json.loads((tmp_path / "a" / "agent_audit.json").read_text(encoding="utf-8"))
+    assert data["plan_source"] == "deterministic_fallback"
+    assert any(event["phase"] == "plan" and event["status"] == "unavailable" for event in data["events"])
+
+
+@pytest.mark.parametrize("mode", ["nvidia", "baseten", "ollama"])
+def test_cli_agent_ai_flag_reaches_selected_router(monkeypatch, tmp_path, mode):
+    import analyze_dataset
+    import provider_router
+
+    monkeypatch.setenv("LABLENS_AI_PROVIDER", mode)
+    monkeypatch.setenv("BASETEN_API_KEY", "unit-test-key")
+    calls = []
+    def fake_plan(prompt, **kwargs):
+        calls.append(mode)
+        raise RuntimeError("mock unavailable")
+    monkeypatch.setattr(provider_router, "request_plan", fake_plan)
+    csv = run_agent_demo.EXAMPLES / "case_a_linear.csv"
+    assert analyze_dataset.main([str(csv), "--agent", "--agent-use-ai", "--output-dir", str(tmp_path)]) == 0
+    assert calls == [mode]
+    data = json.loads((tmp_path / "agent" / "agent_audit.json").read_text(encoding="utf-8"))
+    assert any(event["phase"] == "plan" and event["status"] == "unavailable" for event in data["events"])

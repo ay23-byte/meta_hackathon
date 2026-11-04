@@ -66,7 +66,7 @@ Select `LABLENS_AI_PROVIDER=nvidia` in the process environment or the project-lo
 process environment or that project `.env`. On Windows, the historical
 `F:\meta-hacathon\.env` is used only when the project `.env` does not exist.
 Process values (including blank) take precedence; a blank provider fails closed.
-When no provider is specified, the legacy Muse Spark path remains the default.
+When no provider is specified, NVIDIA NIM is selected. Set `LABLENS_AI_PROVIDER=baseten` for Muse Spark/Baseten or `LABLENS_AI_PROVIDER=ollama` for local Ollama. An explicitly blank or unknown value fails closed; no automatic provider fallback occurs.
 `LABLENS_DISABLE_DOTENV=1`
 disables the file fallback. The NVIDIA endpoint is fixed to
 `https://integrate.api.nvidia.com/v1`; generic endpoint/model settings are ignored.

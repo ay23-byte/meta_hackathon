@@ -278,6 +278,61 @@ def outlier_diagnostics(values) -> dict:
     }
 
 
+
+def residual_outlier_diagnostics(x, y, fit_result, *, threshold: float = 3.5) -> dict:
+    """Flag unusual fit residuals using a robust MAD score; never remove rows.
+
+    Indices refer to the pairwise-complete X/Y arrays supplied to the fit.
+    This is a screening diagnostic, not proof that a measurement is erroneous.
+    """
+    left = pd.to_numeric(pd.Series(np.asarray(x, dtype=object).reshape(-1)), errors="coerce").to_numpy(dtype=float)
+    right = pd.to_numeric(pd.Series(np.asarray(y, dtype=object).reshape(-1)), errors="coerce").to_numpy(dtype=float)
+    if left.size != right.size:
+        return {"valid": False, "indices": [], "reason": "X and Y have different lengths."}
+    mask = np.isfinite(left) & np.isfinite(right)
+    left, right = left[mask], right[mask]
+    parameters = (fit_result or {}).get("parameters") or {}
+    slope, intercept = parameters.get("slope"), parameters.get("intercept")
+    if left.size < 4 or not isinstance(slope, (int, float)) or not isinstance(intercept, (int, float)):
+        return {"valid": False, "n_valid": int(left.size), "indices": [],
+                "reason": "A successful linear fit with at least four complete pairs is required."}
+    residuals = right - (float(slope) * left + float(intercept))
+    center = float(np.median(residuals))
+    mad = float(np.median(np.abs(residuals - center)))
+    scale_floor = np.finfo(float).eps * max(1.0, float(np.max(np.abs(residuals))))
+    if not math.isfinite(mad):
+        return {"valid": False, "n_valid": int(left.size), "indices": [],
+                "reason": "Residual spread is non-finite; robust scoring is unavailable.",
+                "residual_median": center, "residual_mad": None}
+    deviations = residuals - center
+    if mad <= scale_floor:
+        # With a zero MAD, a conventional modified-Z score is undefined.
+        # If most residuals are identical but a minority differ materially,
+        # retain the diagnostic and flag those deviations rather than hiding
+        # an obvious isolated residual behind an invalid result.
+        flagged = np.flatnonzero(np.abs(deviations) > scale_floor).tolist()
+        if not flagged:
+            return {"valid": False, "n_valid": int(left.size), "indices": [],
+                    "reason": "Residual spread is zero or numerically too small for robust scoring.",
+                    "residual_median": center, "residual_mad": mad}
+        scores = None
+        method = "zero_mad_deviation_screen"
+    else:
+        scores = 0.6744897501960817 * deviations / mad
+        flagged = np.flatnonzero(np.abs(scores) > float(threshold)).tolist()
+        method = "modified_z_score_of_linear_fit_residuals"
+    return {
+        "valid": True, "method": method,
+        "threshold": float(threshold), "n_valid": int(left.size),
+        "residual_median": center, "residual_mad": mad,
+        "flagged_indices": flagged,
+        "flagged_residuals": [{"index": int(i), "residual": float(residuals[i]),
+                               "modified_z_score": (float(scores[i]) if scores is not None else None)}
+                              for i in flagged],
+        "caveat": "Screening flags only; observations are never removed automatically. "
+                  "Investigate instrument records and repeat measurements before exclusion.",
+    }
+
 def descriptive_table(frame: pd.DataFrame, columns: list[str], *, ddof: int = 1) -> pd.DataFrame:
     """One row per statistic, one column per selected measurement."""
     summaries = {name: describe_numeric(frame[name], ddof=ddof) for name in columns if name in frame.columns}
