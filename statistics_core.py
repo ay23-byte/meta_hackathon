@@ -299,19 +299,36 @@ def residual_outlier_diagnostics(x, y, fit_result, *, threshold: float = 3.5) ->
     residuals = right - (float(slope) * left + float(intercept))
     center = float(np.median(residuals))
     mad = float(np.median(np.abs(residuals - center)))
-    if not math.isfinite(mad) or mad <= np.finfo(float).eps * max(1.0, float(np.max(np.abs(residuals)))):
+    scale_floor = np.finfo(float).eps * max(1.0, float(np.max(np.abs(residuals))))
+    if not math.isfinite(mad):
         return {"valid": False, "n_valid": int(left.size), "indices": [],
-                "reason": "Residual spread is zero or numerically too small for robust scoring.",
-                "residual_median": center, "residual_mad": mad if math.isfinite(mad) else None}
-    scores = 0.6744897501960817 * (residuals - center) / mad
-    flagged = np.flatnonzero(np.abs(scores) > float(threshold)).tolist()
+                "reason": "Residual spread is non-finite; robust scoring is unavailable.",
+                "residual_median": center, "residual_mad": None}
+    deviations = residuals - center
+    if mad <= scale_floor:
+        # With a zero MAD, a conventional modified-Z score is undefined.
+        # If most residuals are identical but a minority differ materially,
+        # retain the diagnostic and flag those deviations rather than hiding
+        # an obvious isolated residual behind an invalid result.
+        flagged = np.flatnonzero(np.abs(deviations) > scale_floor).tolist()
+        if not flagged:
+            return {"valid": False, "n_valid": int(left.size), "indices": [],
+                    "reason": "Residual spread is zero or numerically too small for robust scoring.",
+                    "residual_median": center, "residual_mad": mad}
+        scores = None
+        method = "zero_mad_deviation_screen"
+    else:
+        scores = 0.6744897501960817 * deviations / mad
+        flagged = np.flatnonzero(np.abs(scores) > float(threshold)).tolist()
+        method = "modified_z_score_of_linear_fit_residuals"
     return {
-        "valid": True, "method": "modified_z_score_of_linear_fit_residuals",
+        "valid": True, "method": method,
         "threshold": float(threshold), "n_valid": int(left.size),
         "residual_median": center, "residual_mad": mad,
         "flagged_indices": flagged,
         "flagged_residuals": [{"index": int(i), "residual": float(residuals[i]),
-                               "modified_z_score": float(scores[i])} for i in flagged],
+                               "modified_z_score": (float(scores[i]) if scores is not None else None)}
+                              for i in flagged],
         "caveat": "Screening flags only; observations are never removed automatically. "
                   "Investigate instrument records and repeat measurements before exclusion.",
     }
