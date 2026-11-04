@@ -45,6 +45,7 @@ from statistics_core import (
     describe_numeric,
     descriptive_table,
     outlier_diagnostics,
+    residual_outlier_diagnostics,
 )
 from visualization_core import build_chart, render_png
 
@@ -156,6 +157,9 @@ def analyze_csv(
     corr = correlation(x_values, y_values, method=correlation_method)
     cov = covariance(x_values, y_values)
     outliers = outlier_diagnostics(y_values)
+    # Complement raw-value IQR screening with fit-residual screening. Neither
+    # diagnostic removes data; both retain indices in the fitted pair sequence.
+    outliers["fit_residuals"] = residual_outlier_diagnostics(x_values, y_values, fit.as_dict())
     domain_result = apply_domain(domain, fit, {
         "x": x_col, "y": y_col, "x_label": x_label, "y_label": y_label,
         "unit_x": unit_x, "unit_y": unit_y,
