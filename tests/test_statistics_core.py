@@ -113,3 +113,18 @@ def test_mean_interval_does_not_treat_underflow_as_identical_data():
     assert "underflow" in result["method"]
     identical = confidence_interval_mean([1e-200, 1e-200, 1e-200])
     assert identical["interval"] == [1e-200, 1e-200]
+
+
+def test_residual_outlier_diagnostics_flags_large_deviation_without_removing():
+    from statistics_core import residual_outlier_diagnostics
+
+    x = np.arange(10, dtype=float)
+    y = 2.0 * x + 1.0
+    y[7] += 30.0
+    fit = {"parameters": {"slope": 2.0, "intercept": 1.0}}
+    result = residual_outlier_diagnostics(x, y, fit)
+    assert result["valid"] is True
+    assert result["flagged_indices"] == [7]
+    assert result["flagged_residuals"][0]["residual"] == pytest.approx(30.0)
+    assert "never removed" in result["caveat"]
+    assert len(x) == len(y) == result["n_valid"]
