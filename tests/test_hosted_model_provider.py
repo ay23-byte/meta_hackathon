@@ -925,3 +925,15 @@ def test_catalog_retries_connection_error_and_fingerprint(monkeypatch):
                 finish_reason="stop", message=SimpleNamespace(content=json.dumps(report())))])))))
     assert hosted.generate_interpretation(CONTEXT, confirmed=True)["model"] == TEST_MODEL
     assert len(calls) == 2
+
+def test_numeric_guard_error_exposes_safe_contradiction_details(monkeypatch):
+    configured(monkeypatch)
+    candidate = report()
+    candidate["sections"][0]["content"] = "The fitted slope is 999."
+    fake_client(monkeypatch, content=json.dumps(candidate))
+    with pytest.raises(RuntimeError, match="numerical/evidence guard") as error:
+        hosted.generate_interpretation(CONTEXT, confirmed=True)
+    message = str(error.value)
+    assert '"metric":"slope"' in message
+    assert "Explicit number conflicts" in message
+    assert SECRET not in message
