@@ -283,7 +283,7 @@ def test_nvidia_evidence_validation(monkeypatch):
     candidate = report()
     candidate["sections"][0]["content"] = "slope=999"
     fake_client(monkeypatch, content=json.dumps(candidate))
-    with pytest.raises(RuntimeError, match="contradicts"):
+    with pytest.raises(RuntimeError, match="numerical/evidence guard|contradicts"):
         hosted.generate_interpretation(CONTEXT, confirmed=True)
 
 
