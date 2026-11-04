@@ -376,7 +376,14 @@ def generate_interpretation(context: dict, section_titles=None, *, profile=ask_m
         raise RuntimeError("Hosted provider response failed report schema or evidence-ID validation.")
     guard = check_report_numbers(structured, context)
     if guard["status"] == "contradiction":
-        raise RuntimeError("Hosted provider report contradicts computed results or evidence IDs.")
+        # The guard contains only bounded, locally generated locations/metric
+        # names and fixed reasons. Include them so a rejected report is
+        # diagnosable without echoing any model-generated text or credentials.
+        details = json.dumps(guard.get("contradictions", [])[:8], ensure_ascii=True,
+                             separators=(",", ":"))[:1200]
+        raise RuntimeError(
+            "Hosted provider report rejected by numerical/evidence guard: " + details
+        )
     # Do not use untrusted response metadata as the model identity.
     return {"source": "hosted_model", "provider": "NVIDIA NIM" if config["mode"] == "nvidia" else PROVIDER_NAME, "model": config["model"], "is_mock": False,
             "provider_status": "hosted_response_validated", "model_catalog_status": catalog_status, "model_identity": "configured_identifier_not_independently_verified", "profile": profile,
